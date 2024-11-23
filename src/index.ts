@@ -194,99 +194,6 @@ interface GameState {
   masterId: number;
   masterName: string;
 }
-
-// Track games by chat ID
-let activeGames: Map<number, GameState> = new Map();
-
-bot.command('guess', async (ctx) => {
-  try {
-    if (!ctx.chat) return;
-    const chatId = ctx.chat.id;
-    let game = activeGames.get(chatId);
-    if (game && ctx.from?.id === game.masterId) {
-      game.active = false;
-      activeGames.delete(chatId);
-      await ctx.telegram.editMessageText(
-        chatId,
-        game.messageId,
-        undefined,
-        `🎲 Game ended by game master.`
-      );
-      return
-    }
-    // Check if there's already an active game in this chat
-    if (game) {
-      const message = await ctx.reply(
-        `🎲 A game is already on! Drop your sendtag to participate.\n` +
-        `First ${game.maxNumber} sendtags\n` +
-        `Entries: ${game.players.length}\n` +
-        "The winner will be posted after the game is over.\n",
-        { disable_notification: true }
-      );
-      game.messageId = message.message_id;
-      deleteMessage(ctx, ctx.message.message_id);
-      return;
-    }
-
-    // Parse the command arguments
-    const args = ctx.message.text.split(' ');
-    let maxNumber = Math.floor(Math.random() * 20) + 3; // default
-    let amount = 1000;
-
-    if (args.length > 1) {
-      const inputNumber = parseInt(args[1]);
-      const inputAmount = parseInt(args[2]);
-      if (!isNaN(inputNumber) && inputNumber > 3) {
-        maxNumber = inputNumber;
-      }
-      if (!isNaN(inputAmount) && inputAmount > 500) {
-        amount = inputAmount;
-      }
-    }
-
-    // Generate random number between 1 and maxNumber
-    const winningNumber = Math.floor(Math.random() * maxNumber) + 1;
-
-    // Send initial message and store its ID
-    const message = await ctx.reply(
-      `🎲 New game started! Drop your sendtag to participate.\n` +
-      `First ${maxNumber} sendtags\n` +
-      `Entries: 0\n` +
-      "The winner will be posted after the game is over.\n",
-      { disable_notification: true }
-    );
-
-    // Create new game state for this chat
-    activeGames.set(chatId, {
-      winningNumber,
-      active: true,
-      players: [],
-      chatId,
-      messageId: message.message_id,
-      maxNumber,
-      amount,
-      masterId: ctx.from?.id,
-      masterName: ctx.from?.first_name
-    });
-
-    // Delete the command message
-    deleteMessage(ctx, ctx.message.message_id);
-
-  } catch (error) {
-    console.error('Game error:', error);
-    try {
-      await ctx.reply(
-        `❌ Error starting game: Something went wrong.\n` +
-        `Please try again later.`,
-        { disable_notification: true }
-      );
-    } catch (replyError) {
-      console.error('Error sending error message:', replyError);
-    }
-  }
-});
-
-
 // Add at the top with other interfaces
 interface DeleteTask {
   chatId: number;
@@ -330,6 +237,108 @@ async function processDeleteQueue() {
   isProcessingQueue = false;
 }
 
+// Track games by chat ID
+let activeGames: Map<number, GameState> = new Map();
+
+bot.command('kill', async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  let game = activeGames.get(chatId);
+  if (game && ctx.from?.id === game.masterId) {
+    game.active = false;
+    activeGames.delete(chatId);
+    await ctx.telegram.editMessageText(
+      chatId,
+      game.messageId,
+      undefined,
+      `🎲 Game ended by game master.`
+    );
+    return
+  }
+})
+
+bot.command('guess', async (ctx) => {
+  try {
+    if (!ctx.chat) return;
+    const chatId = ctx.chat.id;
+    let game = activeGames.get(chatId);
+
+    // Check if there's already an active game in this chat
+    if (game) {
+      const message = await ctx.reply(
+        `🎲 The guessing game is on! Drop your sendtag to participate.\n` +
+        `First ${game.maxNumber} sendtags\n\n` +
+        `Entries: ${game.players.toString()}\n\n` +
+        "The winner will be posted after the game is over.\n",
+        { disable_notification: true }
+      );
+      queueMessageDeletion(ctx, game.messageId)
+      queueMessageDeletion(ctx, ctx.message.message_id);
+      game.messageId = message.message_id;
+      return;
+    }
+
+    // Parse the command arguments
+    const args = ctx.message.text.split(' ');
+    let maxNumber = Math.floor(Math.random() * 20) + 3; // default
+    let amount = 1000;
+
+    if (args.length > 1) {
+      const inputNumber = parseInt(args[1]);
+      const inputAmount = parseInt(args[2]);
+      if (!isNaN(inputNumber) && inputNumber > 3) {
+        maxNumber = inputNumber;
+      }
+      if (!isNaN(inputAmount) && inputAmount > 500) {
+        amount = inputAmount;
+      }
+    }
+
+    // Generate random number between 1 and maxNumber
+    const winningNumber = Math.floor(Math.random() * maxNumber) + 1;
+
+    // Send initial message and store its ID
+    const message = await ctx.reply(
+      `🎲 New game started! Drop your sendtag to participate.\n` +
+      `First ${maxNumber} sendtags\n\n` +
+      `Entries: \n\n` +
+      "The winner will be posted after the game is over.\n",
+      { disable_notification: true }
+    );
+
+    // Create new game state for this chat
+    activeGames.set(chatId, {
+      winningNumber,
+      active: true,
+      players: [],
+      chatId,
+      messageId: message.message_id,
+      maxNumber,
+      amount,
+      masterId: ctx.from?.id,
+      masterName: ctx.from?.first_name
+    });
+
+    // Delete the command message
+    deleteMessage(ctx, ctx.message.message_id);
+
+  } catch (error) {
+    console.error('Game error:', error);
+    try {
+      await ctx.reply(
+        `❌ Error starting game: Something went wrong.\n` +
+        `Please try again later.`,
+        { disable_notification: true }
+      );
+    } catch (replyError) {
+      console.error('Error sending error message:', replyError);
+    }
+  }
+});
+
+
+
+
 bot.hears(/^\/([a-zA-Z0-9_]+)$/, async (ctx) => {
   if (!ctx.chat) return;
   const chatId = ctx.chat.id;
@@ -369,20 +378,20 @@ bot.hears(/^\/([a-zA-Z0-9_]+)$/, async (ctx) => {
       chatId,
       game.messageId,
       undefined,
-      `🎲 New game started! Drop your sendtag to participate.\n` +
-      `First ${game.maxNumber} sendtags\n` +
-      `Entries: ${game.players.length}\n` +
-      "The winner will be posted after the game is over.\n"
+      `🎲 The guessing game is on! Drop your sendtag to participate.\n` +
+      `First ${game.maxNumber} sendtags\n\n` +
+      `Entries: ${game.players.toString()}\n\n` +
+      "The winner will be posted after the game is over.\n",
     );
   } catch (error) {
     console.log('Error updating message:', error);
   }
 
   // If this player's index matches the winning number
-  if (game.players.length === game.winningNumber) {
+  if (game.players.length >= game.maxNumber) {
     // Generate send URL for winner
     const winnerCommand: SendCommand = {
-      recipient: sendtag,
+      recipient: game.players[game.winningNumber - 1].sendtag,
       amount: game.amount.toString(),
       token: TokenType.SEND
     };
@@ -398,6 +407,8 @@ bot.hears(/^\/([a-zA-Z0-9_]+)$/, async (ctx) => {
       `${game.masterName} owes you ${game.amount} SEND.\n\n` +
       sendUrl
     );
+
+    queueMessageDeletion(ctx, game.messageId)
 
     // Remove the finished game
     activeGames.delete(chatId);
