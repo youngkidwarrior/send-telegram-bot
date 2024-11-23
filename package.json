@@ -1,0 +1,26 @@
+{
+  "name": "send-telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for generating Send app links",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "watch": "nodemon src/index.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.1",
+    "telegraf": "^4.15.3",
+    "telegraf-ratelimit": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.16",
+    "nodemon": "^3.0.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
