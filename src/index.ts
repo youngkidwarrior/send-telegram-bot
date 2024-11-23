@@ -43,19 +43,25 @@ interface SendCommand {
 }
 
 function parseSendCommand(text: string): SendCommand | null {
-  const regex = /^\/send\s+\/(\w+)\s+(\d+)\s+(SEND|USDC|ETH)$/i;
+  const regex = /^\/send\s+\/(\w+)\s+([,\d]+)\s+(SEND|USDC|ETH)$/i;
   const match = text.match(regex);
 
-  if (!match) {
+  if (!match?.[1]) {
     return null;
   }
-
-  return {
+  const params: SendCommand = {
     recipient: match[1],
-    amount: match[2],
-    token: match[3].toUpperCase() as TokenType
-  };
+  }
+  if (match[2]) {
+    params.amount = match[2];
+  }
+  if (match[3]) {
+    params.token = match[3].toUpperCase() as TokenType;
+  }
+  return params;
 }
+
+
 
 function generateSendUrl(command: SendCommand): string | null {
   const params: Record<string, string> = {
@@ -388,7 +394,7 @@ bot.hears(/^\/([a-zA-Z0-9_]+)$/, async (ctx) => {
 
   // Update the original message with new entry count
   try {
-    const playerSendtags = game.players.map(player => `/${player.sendtag}`).join(', ');
+    const playerSendtags = game.players.map(player => player.sendtag).join(', ');
     await ctx.telegram.editMessageText(
       chatId,
       game.messageId,
@@ -405,9 +411,10 @@ bot.hears(/^\/([a-zA-Z0-9_]+)$/, async (ctx) => {
   // If this player's index matches the winning number
   if (game.players.length >= game.maxNumber) {
     const winningSendtag = game.players[game.winningNumber - 1].sendtag;
+    const winningRecipient = winningSendtag.split('/')[1];
     // Generate send URL for winner
     const winnerCommand: SendCommand = {
-      recipient: winningSendtag,
+      recipient: winningRecipient,
       amount: game.amount.toString(),
       token: TokenType.SEND
     };
