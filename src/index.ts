@@ -38,8 +38,8 @@ const BASE_URL = 'https://send.app/send/confirm';
 
 interface SendCommand {
   recipient: string;
-  amount: string;
-  token: TokenType;
+  amount?: string;
+  token?: TokenType;
 }
 
 function parseSendCommand(text: string): SendCommand | null {
@@ -63,14 +63,14 @@ function generateSendUrl(command: SendCommand): string | null {
     recipient: command.recipient,
   };
 
-  const tokenConfig = TOKEN_CONFIG[command.token];
+  const tokenConfig = TOKEN_CONFIG[command.token ?? "SEND"];
   if (tokenConfig.useEthAddress) {
     params.sendAddress = 'eth';
   } else if (tokenConfig.address) {
     params.sendToken = tokenConfig.address;
   }
 
-  let amount = parseInt(command.amount);
+  let amount = parseInt(command.amount ?? "");
   if (!isNaN(amount) && amount > 0) {
     params.amount = (BigInt(amount) * (1n * 10n ** tokenConfig.decimals)).toString();
   }
