@@ -274,10 +274,11 @@ bot.command('guess', async (ctx) => {
 
     // Check if there's already an active game in this chat
     if (game) {
+      const playerSendtags = game.players.map(player => player.sendtag).join(', ');
       const message = await ctx.reply(
         `🎲 The game is on! Drop your sendtag to participate.\n` +
         `First ${game.maxNumber} sendtags\n\n` +
-        `Entries: ${game.players.toString()}\n\n` +
+        `Players: ${playerSendtags}\n\n` +
         "The winner will be posted after the game is over.\n",
         { disable_notification: true }
       );
@@ -310,7 +311,7 @@ bot.command('guess', async (ctx) => {
     const message = await ctx.reply(
       `🎲 New game started! Drop your sendtag to participate.\n` +
       `First ${maxNumber} sendtags\n\n` +
-      `Entries: \n\n` +
+      `Players: _ \n\n` +
       "The winner will be posted after the game is over.\n",
       { disable_notification: true }
     );
@@ -385,13 +386,14 @@ bot.hears(/^\/([a-zA-Z0-9_]+)$/, async (ctx) => {
 
   // Update the original message with new entry count
   try {
+    const playerSendtags = game.players.map(player => player.sendtag).join(', ');
     await ctx.telegram.editMessageText(
       chatId,
       game.messageId,
       undefined,
       `🎲 The game is on! Drop your sendtag to participate.\n` +
       `First ${game.maxNumber} sendtags\n\n` +
-      `Entries: ${game.players.toString()}\n\n` +
+      `Players: ${playerSendtags}\n\n` +
       "The winner will be posted after the game is over.\n",
     );
   } catch (error) {
