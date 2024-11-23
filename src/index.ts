@@ -370,7 +370,7 @@ bot.hears(/^\/([a-zA-Z0-9_]+)$/, async (ctx) => {
     return;
   }
 
-  const sendtag = ctx.match[1];
+  const sendtag = `/${ctx.match[1]}`;
 
   // Queue the entry message for deletion
   queueMessageDeletion(ctx, ctx.message.message_id);
@@ -402,9 +402,10 @@ bot.hears(/^\/([a-zA-Z0-9_]+)$/, async (ctx) => {
 
   // If this player's index matches the winning number
   if (game.players.length >= game.maxNumber) {
+    const winningSendtag = game.players[game.winningNumber - 1].sendtag;
     // Generate send URL for winner
     const winnerCommand: SendCommand = {
-      recipient: game.players[game.winningNumber - 1].sendtag,
+      recipient: winningSendtag,
       amount: game.amount.toString(),
       token: TokenType.SEND
     };
@@ -414,8 +415,8 @@ bot.hears(/^\/([a-zA-Z0-9_]+)$/, async (ctx) => {
     await sendHiddenMessage(ctx,
       `🎉 We have a winner!\n` +
       `Winning number: ${game.winningNumber}\n` +
-      `Winner: /${sendtag}\n\n` +
-      `${game.masterName} /send ${sendtag} ${game.amount} SEND.\n\n` +
+      `Winner: ${winningSendtag}\n\n` +
+      `${game.masterName} /send ${winningSendtag} ${game.amount} SEND.\n\n` +
       sendUrl
     );
 
