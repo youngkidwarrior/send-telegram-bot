@@ -278,12 +278,12 @@ const chatCooldowns: Map<number, {
 }> = new Map();
 
 async function startCooldown(ctx: Context, chatId: number) {
-  const endTime = Math.floor(Date.now() / 1000) + 60;
+  const endTime = Math.floor(Date.now() / 1000) + 30;
 
   try {
     // Send cooldown message
     const cooldownMsg = await ctx.reply(
-      `⏳ Sendtag Cooldown: 1 minute`,
+      `⏳ Sendtag Cooldown: 30 sec`,
       { disable_notification: true }
     );
 
@@ -302,7 +302,7 @@ async function startCooldown(ctx: Context, chatId: number) {
       if (cooldown?.messageId) {
         queueMessageDeletion(ctx, cooldown.messageId);
       }
-    }, 60000);
+    }, 30000);
 
   } catch (error) {
     console.error('Error starting cooldown:', error);
