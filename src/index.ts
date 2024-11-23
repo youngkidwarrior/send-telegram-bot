@@ -57,7 +57,7 @@ function parseSendCommand(text: string): SendCommand | null {
   };
 }
 
-function generateSendUrl(command: SendCommand): string {
+function generateSendUrl(command: SendCommand): string | null {
   const params: Record<string, string> = {
     idType: 'tag',
     recipient: command.recipient,
@@ -70,8 +70,10 @@ function generateSendUrl(command: SendCommand): string {
     params.sendToken = tokenConfig.address;
   }
 
-  params.amount = (BigInt(command.amount) * (1n * 10n ** tokenConfig.decimals)).toString();
-
+  let amount = parseInt(command.amount);
+  if (!isNaN(amount) && amount > 0) {
+    params.amount = (BigInt(amount) * (1n * 10n ** tokenConfig.decimals)).toString();
+  }
   return `${BASE_URL}?${new URLSearchParams(params).toString()}`;
 }
 
@@ -386,7 +388,7 @@ bot.hears(/^\/([a-zA-Z0-9_]+)$/, async (ctx) => {
 
   // Update the original message with new entry count
   try {
-    const playerSendtags = game.players.map(player => player.sendtag).join(', ');
+    const playerSendtags = game.players.map(player => `/${player.sendtag}`).join(', ');
     await ctx.telegram.editMessageText(
       chatId,
       game.messageId,
