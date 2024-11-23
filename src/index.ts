@@ -119,22 +119,30 @@ async function sendHiddenMessage(ctx: Context, text: string) {
 }
 
 const helpMessage = `
-*Available commands:*
-\/send \/recipient amount token
-\/guess [number] [amount] - Start sendtag guessing game
+*/send*
+To create a /send link, reply to someone's message with /send or use "/send /sendtag amount token"
 
-*Supported tokens:*
-• SEND: Send token
-• USDC: USDC on Base
-• ETH: Ethereum
+Examples:
+• Reply to someone with /send to get their payment link
+• /send /vic 100 SEND - Send 100 SEND to vic
+• /send /vic 50 USDC - Send 50 USDC to vic
+• /send /vic 0.1 ETH - Send 0.1 ETH to vic
 
-*Examples:*
-\/send \/vic 5555 SEND
-\/send \/vic 100 USDC
-\/send \/vic 1 ETH
-\/guess - Start game with range 1-100
-\/guess 10 - Start game with range 1-10'
-\/guess 10 1000 - Start game with range 1-10 for 1000 SEND post
+Supported tokens: SEND, USDC, ETH
+
+*/guess*
+Start a fun lottery game where players enter their sendtags to win SEND tokens!
+
+Examples:
+• /guess - Start random game (3-20 slots, 1000 SEND prize)
+• /guess 10 - Start game with 10 slots
+• /guess 10 2000 - Start game with 10 slots and 2000 SEND prize
+• /kill - End your game (only game master)
+
+How it works:
+• Players enter their sendtags (e.g. /vic)
+• When all slots are filled, a random winner is chosen
+• Game creator sends SEND tokens to the winner
 `;
 
 
@@ -160,7 +168,7 @@ bot.command('send', async (ctx) => {
     if (repliedToUser && !isReplyToSelf) {
       const parsedName = repliedToUser.first_name?.split('/');
       const hasSendtag = parsedName !== undefined && parsedName.length > 1
-      const cleanSendtag = hasSendtag && parsedName[1].replace(/[\u{1F300}-\u{1F9FF}]|[\u{2700}-\u{27BF}]|[\u{2600}-\u{26FF}]|[\u{2300}-\u{23FF}]|[\u{1F000}-\u{1F6FF}]|[\u{1F900}-\u{1F9FF}]|[\u{1F100}-\u{1F1FF}]|[\u{1F680}-\u{1F6FF}]|[\u{2000}-\u{206F}]|[\u{2190}-\u{21FF}]|[\u{20D0}-\u{20FF}]|[\u{2100}-\u{214F}]|[\u{2B00}-\u{2BFF}]/gu, '').trim();
+      const cleanSendtag = hasSendtag && parsedName[1].replace(/[^a-zA-Z0-9_]/gu, '').trim();
 
 
       if (hasSendtag) {
@@ -251,8 +259,9 @@ bot.command('kill', async (ctx) => {
       chatId,
       game.messageId,
       undefined,
-      `🎲 Game ended by game master.`
+      `🎲 Game killed by game master.`
     );
+    queueMessageDeletion(ctx, ctx.message.message_id);
     return
   }
 })
@@ -266,7 +275,7 @@ bot.command('guess', async (ctx) => {
     // Check if there's already an active game in this chat
     if (game) {
       const message = await ctx.reply(
-        `🎲 The guessing game is on! Drop your sendtag to participate.\n` +
+        `🎲 The game is on! Drop your sendtag to participate.\n` +
         `First ${game.maxNumber} sendtags\n\n` +
         `Entries: ${game.players.toString()}\n\n` +
         "The winner will be posted after the game is over.\n",
@@ -366,11 +375,13 @@ bot.hears(/^\/([a-zA-Z0-9_]+)$/, async (ctx) => {
   queueMessageDeletion(ctx, ctx.message.message_id);
 
   // Add player to game's players array
-  game.players.push({
-    sendtag,
-    messageId: ctx.message.message_id,
-    userId: userId
-  });
+  if (game.players.length < game.maxNumber) {
+    game.players.push({
+      sendtag,
+      messageId: ctx.message.message_id,
+      userId: userId
+    });
+  }
 
   // Update the original message with new entry count
   try {
@@ -378,7 +389,7 @@ bot.hears(/^\/([a-zA-Z0-9_]+)$/, async (ctx) => {
       chatId,
       game.messageId,
       undefined,
-      `🎲 The guessing game is on! Drop your sendtag to participate.\n` +
+      `🎲 The game is on! Drop your sendtag to participate.\n` +
       `First ${game.maxNumber} sendtags\n\n` +
       `Entries: ${game.players.toString()}\n\n` +
       "The winner will be posted after the game is over.\n",
@@ -398,17 +409,17 @@ bot.hears(/^\/([a-zA-Z0-9_]+)$/, async (ctx) => {
 
     const sendUrl = generateSendUrl(winnerCommand);
 
-    game.active = false;
-
     await sendHiddenMessage(ctx,
       `🎉 We have a winner!\n` +
       `Winning number: ${game.winningNumber}\n` +
       `Winner: /${sendtag}\n\n` +
-      `${game.masterName} owes you ${game.amount} SEND.\n\n` +
+      `${game.masterName} /send ${sendtag} ${game.amount} SEND.\n\n` +
       sendUrl
     );
 
     queueMessageDeletion(ctx, game.messageId)
+
+    game.active = false;
 
     // Remove the finished game
     activeGames.delete(chatId);
