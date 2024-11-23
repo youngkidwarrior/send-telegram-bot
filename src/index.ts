@@ -15,7 +15,6 @@ enum TokenType {
 
 interface TokenConfig {
   address?: string;
-  useEthAddress?: boolean;
   decimals: bigint
 }
 
@@ -29,11 +28,12 @@ const TOKEN_CONFIG: Record<TokenType, TokenConfig> = {
     decimals: 6n
   },
   [TokenType.ETH]: {
-    useEthAddress: true,
+    address: 'eth',
     decimals: 18n
   }
 };
 
+const SEND_URL = 'https://send.app/send';
 const BASE_URL = 'https://send.app/send/confirm';
 
 interface SendCommand {
@@ -43,22 +43,32 @@ interface SendCommand {
 }
 
 function parseSendCommand(text: string): SendCommand | null {
-  const regex = /^\/send\s+\/(\w+)\s+([,\d]+)\s+(SEND|USDC|ETH)$/i;
-  const match = text.match(regex);
+  // Remove /send and trim to parse the rest
+  const content = text.slice(5).trim();
 
-  if (!match?.[1]) {
+  // Match each part
+  const sendtagMatch = content.match(/\/(\w+)/);         // matches /vic
+  const amountMatch = content.match(/([,\d.]+)/);        // matches 100, 1,000, 0.5
+  const tokenMatch = content.match(/(SEND|USDC|ETH)/i);
+
+  if (!sendtagMatch?.[1]) {
     return null;
   }
+
   const params: SendCommand = {
-    recipient: match[1],
+    recipient: sendtagMatch[1],
   }
-  if (match[2]) {
-    params.amount = match[2];
+
+  if (amountMatch?.[1]) {
+    params.amount = amountMatch[1];
   }
-  if (match[3]) {
-    params.token = match[3].toUpperCase() as TokenType;
+
+  if (tokenMatch?.[1]) {
+    params.token = tokenMatch[1].toUpperCase() as TokenType;
   }
+
   return params;
+
 }
 
 
@@ -70,16 +80,19 @@ function generateSendUrl(command: SendCommand): string | null {
   };
 
   const tokenConfig = TOKEN_CONFIG[command.token ?? "SEND"];
-  if (tokenConfig.useEthAddress) {
-    params.sendAddress = 'eth';
-  } else if (tokenConfig.address) {
+  if (tokenConfig.address) {
     params.sendToken = tokenConfig.address;
   }
 
-  let amount = parseInt(command.amount ?? "");
-  if (!isNaN(amount) && amount > 0) {
-    params.amount = (BigInt(amount) * (1n * 10n ** tokenConfig.decimals)).toString();
+  let amount = parseFloat(command.amount?.replace(/,/g, '') ?? "");
+  if (!isNaN(amount) && amount > 0.) {
+    const amountInSmallestUnit = amount * Number(10n ** tokenConfig.decimals);
+    params.amount = BigInt(Math.round(amountInSmallestUnit)).toString();
   }
+  if (!params.amount) {
+    return `${SEND_URL}?${new URLSearchParams(params).toString()}`;
+  }
+
   return `${BASE_URL}?${new URLSearchParams(params).toString()}`;
 }
 
@@ -206,7 +219,7 @@ interface GameState {
   chatId: number;
   messageId: number;
   maxNumber: number;
-  amount: number;
+  amount: string;
   masterId: number;
   masterName: string;
 }
@@ -256,6 +269,46 @@ async function processDeleteQueue() {
 // Track games by chat ID
 let activeGames: Map<number, GameState> = new Map();
 
+// Add with other global variables
+const chatCooldowns: Map<number, {
+  active: boolean,
+  messageId?: number,
+  lastUpdate: number,
+  endTime: number,
+}> = new Map();
+
+async function startCooldown(ctx: Context, chatId: number) {
+  const endTime = Math.floor(Date.now() / 1000) + 60;
+
+  try {
+    // Send cooldown message
+    const cooldownMsg = await ctx.reply(
+      `⏳ Sendtag Cooldown: 1 minute`,
+      { disable_notification: true }
+    );
+
+    const cooldown = {
+      active: true,
+      messageId: cooldownMsg.message_id,
+      lastUpdate: Date.now(),
+      endTime: endTime,
+    };
+    chatCooldowns.set(chatId, cooldown);
+
+    // Clear after 1 minute
+    setTimeout(() => {
+      const cooldown = chatCooldowns.get(chatId)
+      chatCooldowns.delete(chatId)
+      if (cooldown?.messageId) {
+        queueMessageDeletion(ctx, cooldown.messageId);
+      }
+    }, 60000);
+
+  } catch (error) {
+    console.error('Error starting cooldown:', error);
+  }
+}
+
 bot.command('kill', async (ctx) => {
   if (!ctx.chat) return;
   const chatId = ctx.chat.id;
@@ -279,6 +332,11 @@ bot.command('guess', async (ctx) => {
     if (!ctx.chat) return;
     const chatId = ctx.chat.id;
     let game = activeGames.get(chatId);
+    let cooldown = chatCooldowns.get(chatId);
+    if (cooldown?.active) {
+      cooldown.messageId && queueMessageDeletion(ctx, cooldown.messageId);
+      cooldown.active = false;
+    }
 
     // Check if there's already an active game in this chat
     if (game) {
@@ -298,19 +356,15 @@ bot.command('guess', async (ctx) => {
 
     // Parse the command arguments
     const args = ctx.message.text.split(' ');
-    let maxNumber = Math.floor(Math.random() * 20) + 3; // default
-    let amount = 1000;
+    let minNumber = 1;
+    let maxNumber = Math.floor(Math.random() * 20) + minNumber; // default
+    let amount = args[2] ?? "1000";
 
-    if (args.length > 1) {
-      const inputNumber = parseInt(args[1]);
-      const inputAmount = parseInt(args[2]);
-      if (!isNaN(inputNumber) && inputNumber > 3) {
-        maxNumber = inputNumber;
-      }
-      if (!isNaN(inputAmount) && inputAmount > 500) {
-        amount = inputAmount;
-      }
+
+    if (!isNaN(parseInt(args[1]))) {
+      maxNumber = Math.max(minNumber, Math.min(parseInt(args[1]), 20));
     }
+
 
     // Generate random number between 1 and maxNumber
     const winningNumber = Math.floor(Math.random() * maxNumber) + 1;
@@ -355,86 +409,110 @@ bot.command('guess', async (ctx) => {
 });
 
 
-
-
-bot.hears(/^\/([a-zA-Z0-9_]+)$/, async (ctx) => {
-  if (!ctx.chat) return;
+bot.on('message', async (ctx) => {
+  if (!ctx.chat || !('text' in ctx.message)) return;
   const chatId = ctx.chat.id;
+  const text = ctx.message.text;
 
+  const cooldown = chatCooldowns.get(chatId);
   const game = activeGames.get(chatId);
-  if (!game?.active) {
-    return;
-  }
 
-  const userId = ctx.from?.id;
-  if (!userId) {
+  // Regex patterns
+  const anySendtagRegex = /\/[a-zA-Z0-9_]+/;
+  const exactSendtagRegex = /^\/([a-zA-Z0-9_]+)$/;
+
+  // Handle cooldown period
+  if (cooldown?.active && anySendtagRegex.test(text)) {
     queueMessageDeletion(ctx, ctx.message.message_id);
+
+    const now = Date.now();
+    if (now - cooldown.lastUpdate >= 500 && cooldown.messageId) {
+      cooldown.lastUpdate = now;
+      try {
+        queueMessageDeletion(ctx, cooldown.messageId);
+        const cooldownMsg = await ctx.reply(
+          `⏳ Sendtag Cooldown (${Math.ceil((cooldown.endTime - Date.now() / 1000))}s)`,
+          { parse_mode: 'HTML' }
+        );
+        cooldown.messageId = cooldownMsg.message_id;
+      } catch (error) {
+        console.log('Error updating cooldown message:', error);
+      }
+    }
     return;
   }
 
-  // Check if user has already participated in this chat's game
-  if (game.players.some(player => player.userId === userId)) {
+  // Handle game entries
+  if (game?.active && exactSendtagRegex.test(text)) {
+    const match = text.match(exactSendtagRegex);
+    if (!match) return;
+
+    const userId = ctx.from?.id;
+    if (!userId) {
+      queueMessageDeletion(ctx, ctx.message.message_id);
+      return;
+    }
+
+    // Check if user already participated
+    if (game.players.some(player => player.userId === userId)) {
+      queueMessageDeletion(ctx, ctx.message.message_id);
+      return;
+    }
+
+    const sendtag = `/${match[1]}`;
     queueMessageDeletion(ctx, ctx.message.message_id);
-    return;
-  }
 
-  const sendtag = `/${ctx.match[1]}`;
+    // Add player to game
+    if (game.players.length < game.maxNumber) {
+      game.players.push({
+        sendtag,
+        messageId: ctx.message.message_id,
+        userId: userId
+      });
+    }
 
-  // Queue the entry message for deletion
-  queueMessageDeletion(ctx, ctx.message.message_id);
+    // Update game message
+    try {
+      const playerSendtags = game.players.map(player => player.sendtag).join(', ');
+      await ctx.telegram.editMessageText(
+        chatId,
+        game.messageId,
+        undefined,
+        `🎲 The game is on! Drop your sendtag to participate.\n` +
+        `First ${game.maxNumber} sendtags\n\n` +
+        `Players: ${playerSendtags}\n\n` +
+        "The winner will be posted after the game is over.\n",
+      );
+    } catch (error) {
+      console.log('Error updating message:', error);
+    }
 
-  // Add player to game's players array
-  if (game.players.length < game.maxNumber) {
-    game.players.push({
-      sendtag,
-      messageId: ctx.message.message_id,
-      userId: userId
-    });
-  }
+    // Handle game completion
+    if (game.players.length >= game.maxNumber) {
+      const winningSendtag = game.players[game.winningNumber - 1].sendtag;
+      const winningRecipient = winningSendtag.split('/')[1];
 
-  // Update the original message with new entry count
-  try {
-    const playerSendtags = game.players.map(player => player.sendtag).join(', ');
-    await ctx.telegram.editMessageText(
-      chatId,
-      game.messageId,
-      undefined,
-      `🎲 The game is on! Drop your sendtag to participate.\n` +
-      `First ${game.maxNumber} sendtags\n\n` +
-      `Players: ${playerSendtags}\n\n` +
-      "The winner will be posted after the game is over.\n",
-    );
-  } catch (error) {
-    console.log('Error updating message:', error);
-  }
+      const winnerCommand: SendCommand = {
+        recipient: winningRecipient,
+        amount: game.amount,
+        token: TokenType.SEND
+      };
 
-  // If this player's index matches the winning number
-  if (game.players.length >= game.maxNumber) {
-    const winningSendtag = game.players[game.winningNumber - 1].sendtag;
-    const winningRecipient = winningSendtag.split('/')[1];
-    // Generate send URL for winner
-    const winnerCommand: SendCommand = {
-      recipient: winningRecipient,
-      amount: game.amount.toString(),
-      token: TokenType.SEND
-    };
+      const sendUrl = generateSendUrl(winnerCommand);
 
-    const sendUrl = generateSendUrl(winnerCommand);
+      await sendHiddenMessage(ctx,
+        `🎉 We have a winner!\n` +
+        `Winning number: ${game.winningNumber}\n` +
+        `Winner: ${winningSendtag}\n\n` +
+        `${game.masterName} /send ${winningSendtag} ${game.amount} SEND.\n\n` +
+        sendUrl
+      );
 
-    await sendHiddenMessage(ctx,
-      `🎉 We have a winner!\n` +
-      `Winning number: ${game.winningNumber}\n` +
-      `Winner: ${winningSendtag}\n\n` +
-      `${game.masterName} /send ${winningSendtag} ${game.amount} SEND.\n\n` +
-      sendUrl
-    );
-
-    queueMessageDeletion(ctx, game.messageId)
-
-    game.active = false;
-
-    // Remove the finished game
-    activeGames.delete(chatId);
+      queueMessageDeletion(ctx, game.messageId);
+      game.active = false;
+      activeGames.delete(chatId);
+      await startCooldown(ctx, chatId);
+    }
   }
 });
 
