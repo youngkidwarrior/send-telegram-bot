@@ -89,11 +89,11 @@ function generateSendUrl(command: SendCommand): string | null {
     const amountInSmallestUnit = amount * Number(10n ** tokenConfig.decimals);
     params.amount = BigInt(Math.round(amountInSmallestUnit)).toString();
   }
-  if (!params.amount) {
-    return `${SEND_URL}?${new URLSearchParams(params).toString()}`;
-  }
 
-  return `${BASE_URL}?${new URLSearchParams(params).toString()}`;
+  const baseUrl = !params.amount ? SEND_URL : BASE_URL;
+  const regularUrl = `${baseUrl}?${new URLSearchParams(params).toString()}`;
+
+  return `[\u200E](${regularUrl})`; // Using explicit Unicode LRM character;
 }
 
 async function deleteMessage(ctx: Context, messageId: number) {
@@ -131,6 +131,7 @@ async function sendHiddenMessage(ctx: Context, text: string) {
 
     // Send the response as a self-destructing message
     return await ctx.reply(text, {
+      parse_mode: 'Markdown',
       disable_notification: true, // Silent notification
     });
 
