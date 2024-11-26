@@ -101,8 +101,12 @@ function generateSendUrl(command: SendCommand): string {
 
 function generateButtonText(recipient: string, amount?: string, token?: TokenType): string {
   return amount ?
-    `💸 Send ${amount} ${token ?? 'SEND'} to /${recipient}` :
-    `💸 Send to /${recipient}`;
+    `➡️  send ${amount} ${token ?? 'SEND'} to /${recipient}` :
+    `➡️  send to /${recipient}`;
+}
+
+function generateGameButtonText(winner: string, game: GameState): string {
+  return `➡️ ${game.masterName} send ${game.amount} to /${winner}`
 }
 
 async function deleteMessage(ctx: Context, messageId: number) {
@@ -151,31 +155,14 @@ async function sendMessage(ctx: Context, text: string) {
 
 const helpMessage = `
 */send*
-To create a /send link, reply to someone's message with /send or use "/send /sendtag amount token"
-
-Examples:
-• Reply to someone with /send to get their payment link
-• /send /vic 100 SEND - Send 100 SEND to vic
-• /send /vic 50 USDC - Send 50 USDC to vic
-• /send /vic 0.1 ETH - Send 0.1 ETH to vic
-
-Supported tokens: SEND, USDC, ETH
+• Reply with /send to get send link
+• /send /vic 100 SEND
 
 */guess*
-Start a fun lottery game where players enter their sendtags to win SEND tokens!
-
-Examples:
-• /guess - Start random game (3-20 slots, 1000 SEND prize)
-• /guess 10 - Start game with 10 slots
-• /guess 10 2000 - Start game with 10 slots and 2000 SEND prize
-• /kill - End your game (only game master)
-
-How it works:
-• Players enter their sendtags (e.g. /vic)
-• When all slots are filled, a random winner is chosen
-• Game creator sends SEND tokens to the winner
+• /guess - Random slots, 1000 SEND prize
+• /guess 10 2000 - 10 slots, 2000 SEND prize
+• /kill - End your game
 `;
-
 
 // Handle /help command
 bot.command('help', async (ctx) => {
@@ -196,7 +183,7 @@ bot.command('send', async (ctx) => {
     await ctx.reply(text, {
       reply_markup: {
         inline_keyboard: [[
-          { text: '💰 Send It', url }
+          { text: '🚀 /send', url }
         ]]
       },
       disable_notification: true
@@ -215,11 +202,33 @@ bot.command('send', async (ctx) => {
       const cleanSendtag = hasSendtag && parsedName[1].replace(/[^a-zA-Z0-9_]/gu, '').trim();
 
       if (hasSendtag && cleanSendtag) {
-        const parsedCommand = parseSendCommand(ctx.message.text);
+        // Check if there's any content after /send
+        const content = ctx.message.text.slice(5).trim();
+
+        // If no content, just do a quick send
+        if (!content) {
+          const command: SendCommand = { recipient: cleanSendtag };
+          const url = generateSendUrl(command);
+          const text = generateButtonText(cleanSendtag);
+
+          await ctx.reply(text, {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '➡️ Send', url }
+              ]]
+            },
+            disable_notification: true
+          });
+          queueMessageDeletion(ctx, ctx.message.message_id);
+          return;
+        }
+
+        // Otherwise parse amount/token
+        const amountMatch = content.match(/^([,\d.]+)(?:\s+(SEND|USDC|ETH))?$/i);
         const command: SendCommand = {
           recipient: cleanSendtag,
-          amount: parsedCommand?.amount,
-          token: parsedCommand?.token
+          amount: amountMatch?.[1],
+          token: (amountMatch?.[2]?.toUpperCase() ?? 'SEND') as TokenType
         };
 
         const url = generateSendUrl(command);
@@ -228,11 +237,12 @@ bot.command('send', async (ctx) => {
         await ctx.reply(text, {
           reply_markup: {
             inline_keyboard: [[
-              { text: '💰 Send It', url }
+              { text: '💰 /send', url }
             ]]
           },
           disable_notification: true
         });
+        queueMessageDeletion(ctx, ctx.message.message_id);
         return;
       }
     }
@@ -276,10 +286,17 @@ let isProcessingQueue = false;
 async function queueMessageDeletion(ctx: Context, messageId: number) {
   if (!ctx.chat) return;
 
-  deleteQueue.push({
+  const task = {
     chatId: ctx.chat.id,
     messageId: messageId
-  });
+  };
+
+  // If it's our bot's message, prioritize it
+  if (ctx.from?.id === bot.botInfo?.id) {
+    deleteQueue.unshift(task);
+  } else {
+    deleteQueue.push(task);
+  }
 
   if (!isProcessingQueue) {
     processDeleteQueue();
@@ -317,12 +334,12 @@ const chatCooldowns: Map<number, {
 }> = new Map();
 
 async function startCooldown(ctx: Context, chatId: number) {
-  const endTime = Math.floor(Date.now() / 1000) + 30;
+  const endTime = Math.floor(Date.now() / 1000) + 45;
 
   try {
     // Send cooldown message
     const cooldownMsg = await ctx.reply(
-      `⏳ Sendtag Cooldown: 30 sec`,
+      `⏳ Sendtag Cooldown: 45 sec`,
       { disable_notification: true }
     );
 
@@ -383,8 +400,8 @@ bot.command('guess', async (ctx) => {
       const message = await ctx.reply(
         `🎲 The game is on! Drop your sendtag to participate.\n` +
         `First ${game.maxNumber} sendtags\n\n` +
-        `Players: ${playerSendtags}\n\n` +
-        "The winner will be posted after the game is over.\n",
+        `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
+        ` ${game.masterName} is sending it.\n`,
         { disable_notification: true }
       );
       queueMessageDeletion(ctx, game.messageId)
@@ -413,7 +430,7 @@ bot.command('guess', async (ctx) => {
       `🎲 New game started! Drop your sendtag to participate.\n` +
       `First ${maxNumber} sendtags\n\n` +
       `Players: _ \n\n` +
-      "The winner will be posted after the game is over.\n",
+      ` ${ctx.from?.first_name} is sending it.\n`,
       { disable_notification: true }
     );
 
@@ -465,7 +482,7 @@ bot.on('message', async (ctx) => {
     queueMessageDeletion(ctx, ctx.message.message_id);
 
     const now = Date.now();
-    if (now - cooldown.lastUpdate >= 500 && cooldown.messageId) {
+    if (now - cooldown.lastUpdate >= 1000 && cooldown.messageId) {
       cooldown.lastUpdate = now;
       try {
         queueMessageDeletion(ctx, cooldown.messageId);
@@ -519,8 +536,8 @@ bot.on('message', async (ctx) => {
         undefined,
         `🎲 The game is on! Drop your sendtag to participate.\n` +
         `First ${game.maxNumber} sendtags\n\n` +
-        `Players: ${playerSendtags}\n\n` +
-        "The winner will be posted after the game is over.\n",
+        `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
+        ` ${game.masterName} is sending it.\n`,
       );
     } catch (error) {
       console.log('Error updating message:', error);
@@ -539,17 +556,15 @@ bot.on('message', async (ctx) => {
 
       // When a game winner is chosen
       const url = generateSendUrl(winnerCommand);
-      const text = generateButtonText(winnerCommand.recipient, winnerCommand.amount, winnerCommand.token);
+      const text = generateGameButtonText(winningSendtag, game);
 
 
       await ctx.reply(
-        `🎉 We have a winner!\n` +
-        `Winning number: ${game.winningNumber}\n` +
-        `Winner: ${winningSendtag}\n\n` +
+        `🎉 Winner # ${game.winningNumber}!\n` +
         text, {  //
         reply_markup: {
           inline_keyboard: [[
-            { text: '💰 Send It', url }
+            { text: `${game.masterName} send ${winningSendtag}`, url }
           ]]
         },
         disable_notification: true
