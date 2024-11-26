@@ -46,11 +46,14 @@ function parseSendCommand(text: string): SendCommand | null {
   // Remove /send and trim to parse the rest
   const content = text.slice(5).trim();
 
-  // Match each part
-  const sendtagMatch = content.match(/\/(\w+)/);         // matches /vic
-  const amountMatch = content.match(/([,\d.]+)/);        // matches 100, 1,000, 0.5
-  const tokenMatch = content.match(/(SEND|USDC|ETH)/i);
+  // Match patterns in specific order
+  const patterns = {
+    sendtag: /\/([a-zA-Z0-9_]+)/,      // Must start with /
+    amount: /\s+([,\d.]+)\s+/,         // Must have spaces around number
+    token: /\s+(SEND|USDC|ETH)(?:\s+|$)/i  // Must have space before token
+  };
 
+  const sendtagMatch = content.match(patterns.sendtag);
   if (!sendtagMatch?.[1]) {
     return null;
   }
@@ -59,16 +62,17 @@ function parseSendCommand(text: string): SendCommand | null {
     recipient: sendtagMatch[1],
   }
 
+  const amountMatch = content.match(patterns.amount);
   if (amountMatch?.[1]) {
     params.amount = amountMatch[1];
   }
 
+  const tokenMatch = content.match(patterns.token);
   if (tokenMatch?.[1]) {
     params.token = tokenMatch[1].toUpperCase() as TokenType;
   }
 
   return params;
-
 }
 
 
