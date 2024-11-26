@@ -49,7 +49,7 @@ function parseSendCommand(text: string): SendCommand | null {
   // Match patterns in specific order
   const patterns = {
     sendtag: /\/([a-zA-Z0-9_]+)/,      // Must start with /
-    amount: /\s+([,\d.]+)\s+/,         // Must have spaces around number
+    amount: /\d{1,3}(?:,\d{3})*(?:\.\d+)?/,         // Ensure it's a valid number format
     token: /\s+(SEND|USDC|ETH)(?:\s+|$)/i  // Must have space before token
   };
 
@@ -99,14 +99,15 @@ function generateSendUrl(command: SendCommand): string {
   return url;
 }
 
-function generateButtonText(recipient: string, amount?: string, token?: TokenType): string {
+// Modify the button text generation
+function generateButtonText(sender: string, recipient: string, amount?: string, token?: TokenType): string {
   return amount ?
-    `➡️  send ${amount} ${token ?? 'SEND'} to /${recipient}` :
-    `➡️  send to /${recipient}`;
+    `➡️ ${sender} is sending ${amount} ${token ?? 'SEND'} to /${recipient}` :
+    `➡️ ${sender} is sending to /${recipient}`;
 }
 
 function generateGameButtonText(winner: string, game: GameState): string {
-  return `➡️ ${game.masterName} send ${game.amount} to /${winner}`
+  return `➡️ ${game.masterName} send ${game.amount} to ${winner}`
 }
 
 async function deleteMessage(ctx: Context, messageId: number) {
@@ -178,12 +179,12 @@ bot.command('send', async (ctx) => {
   const parsedCommand = parseSendCommand(ctx.message.text);
   if (parsedCommand) {
     const url = generateSendUrl(parsedCommand);
-    const text = generateButtonText(parsedCommand.recipient, parsedCommand.amount, parsedCommand.token);
+    const text = generateButtonText(ctx.from.first_name, parsedCommand.recipient, parsedCommand.amount, parsedCommand.token);
 
     await ctx.reply(text, {
       reply_markup: {
         inline_keyboard: [[
-          { text: '🚀 /send', url }
+          { text: '➡️ /send', url }
         ]]
       },
       disable_notification: true
@@ -209,12 +210,12 @@ bot.command('send', async (ctx) => {
         if (!content) {
           const command: SendCommand = { recipient: cleanSendtag };
           const url = generateSendUrl(command);
-          const text = generateButtonText(cleanSendtag);
+          const text = generateButtonText(ctx.from.first_name, cleanSendtag);
 
           await ctx.reply(text, {
             reply_markup: {
               inline_keyboard: [[
-                { text: '➡️ Send', url }
+                { text: '➡️ /send', url }
               ]]
             },
             disable_notification: true
@@ -224,20 +225,27 @@ bot.command('send', async (ctx) => {
         }
 
         // Otherwise parse amount/token
-        const amountMatch = content.match(/^([,\d.]+)(?:\s+(SEND|USDC|ETH))?$/i);
+        const patterns = {
+          amount: /\d{1,3}(?:,\d{3})*(?:\.\d+)?/,         // Must have spaces around number
+          token: /\s+(SEND|USDC|ETH)(?:\s+|$)/i  // Must have space before token
+        };
+
+        const amountMatch = content.match(patterns.amount);
+        const tokenMatch = content.match(patterns.token);
+
         const command: SendCommand = {
           recipient: cleanSendtag,
           amount: amountMatch?.[1],
-          token: (amountMatch?.[2]?.toUpperCase() ?? 'SEND') as TokenType
+          token: (tokenMatch?.[1]?.toUpperCase() ?? 'SEND') as TokenType
         };
 
         const url = generateSendUrl(command);
-        const text = generateButtonText(command.recipient, command.amount, command.token);
+        const text = generateButtonText(ctx.from.first_name, command.recipient, command.amount, command.token);
 
         await ctx.reply(text, {
           reply_markup: {
             inline_keyboard: [[
-              { text: '💰 /send', url }
+              { text: '➡️ {/send', url }
             ]]
           },
           disable_notification: true
@@ -564,7 +572,7 @@ bot.on('message', async (ctx) => {
         text, {  //
         reply_markup: {
           inline_keyboard: [[
-            { text: `${game.masterName} send ${winningSendtag}`, url }
+            { text: `${game.masterName} send ${winningRecipient}`, url }
           ]]
         },
         disable_notification: true
