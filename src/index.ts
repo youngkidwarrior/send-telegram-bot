@@ -76,8 +76,7 @@ function parseSendCommand(text: string): SendCommand | null {
 }
 
 
-
-function generateSendUrl(command: SendCommand): string | null {
+function generateSendUrl(command: SendCommand): string {
   const params: Record<string, string> = {
     idType: 'tag',
     recipient: command.recipient,
@@ -95,9 +94,15 @@ function generateSendUrl(command: SendCommand): string | null {
   }
 
   const baseUrl = !params.amount ? SEND_URL : BASE_URL;
-  const regularUrl = `${baseUrl}?${new URLSearchParams(params).toString()}`;
+  const url = `${baseUrl}?${new URLSearchParams(params).toString()}`;
 
-  return `[\u200E](${regularUrl})`; // Using explicit Unicode LRM character;
+  return url;
+}
+
+function generateButtonText(recipient: string, amount?: string, token?: TokenType): string {
+  return amount ?
+    `💸 Send ${amount} ${token ?? 'SEND'} to /${recipient}` :
+    `💸 Send to /${recipient}`;
 }
 
 async function deleteMessage(ctx: Context, messageId: number) {
@@ -128,7 +133,7 @@ async function deleteMessage(ctx: Context, messageId: number) {
   }
 }
 
-async function sendHiddenMessage(ctx: Context, text: string) {
+async function sendMessage(ctx: Context, text: string) {
   try {
     // Delete the original command message if possible
     ctx.message && deleteMessage(ctx, ctx.message.message_id);
@@ -140,7 +145,7 @@ async function sendHiddenMessage(ctx: Context, text: string) {
     });
 
   } catch (error) {
-    console.error('Error in sendHiddenMessage:', error);
+    console.error('Error in sendMessage:', error);
   }
 }
 
@@ -174,15 +179,29 @@ How it works:
 
 // Handle /help command
 bot.command('help', async (ctx) => {
-  await sendHiddenMessage(ctx, helpMessage);
+  await sendMessage(ctx, helpMessage);
 });
 
 // Handle /send command
 bot.command('send', async (ctx) => {
+  if (!ctx.chat) {
+    queueMessageDeletion(ctx, ctx.message.message_id);
+    return;
+  }
   const parsedCommand = parseSendCommand(ctx.message.text);
   if (parsedCommand) {
-    const sendUrl = generateSendUrl(parsedCommand);
-    await sendHiddenMessage(ctx, `${ctx.message.text}\n\n${sendUrl}`);
+    const url = generateSendUrl(parsedCommand);
+    const text = generateButtonText(parsedCommand.recipient, parsedCommand.amount, parsedCommand.token);
+
+    await ctx.reply(text, {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '💰 Send It', url }
+        ]]
+      },
+      disable_notification: true
+    });
+    queueMessageDeletion(ctx, ctx.message.message_id);
     return;
   }
 
@@ -190,21 +209,36 @@ bot.command('send', async (ctx) => {
     const repliedToUser = ctx.message.reply_to_message.from;
     const isReplyToSelf = repliedToUser?.id === ctx.message.from.id;
 
-    // Check all available user properties
     if (repliedToUser && !isReplyToSelf) {
       const parsedName = repliedToUser.first_name?.split('/');
       const hasSendtag = parsedName !== undefined && parsedName.length > 1
       const cleanSendtag = hasSendtag && parsedName[1].replace(/[^a-zA-Z0-9_]/gu, '').trim();
 
+      if (hasSendtag && cleanSendtag) {
+        const parsedCommand = parseSendCommand(ctx.message.text);
+        const command: SendCommand = {
+          recipient: cleanSendtag,
+          amount: parsedCommand?.amount,
+          token: parsedCommand?.token
+        };
 
-      if (hasSendtag) {
-        sendHiddenMessage(ctx, `${repliedToUser.first_name}\n\n${"https://send.app/send?idType=tag&recipient=" + cleanSendtag}`);
+        const url = generateSendUrl(command);
+        const text = generateButtonText(command.recipient, command.amount, command.token);
+
+        await ctx.reply(text, {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '💰 Send It', url }
+            ]]
+          },
+          disable_notification: true
+        });
         return;
       }
     }
   }
 
-  deleteMessage(ctx, ctx.message.message_id);
+  queueMessageDeletion(ctx, ctx.message.message_id);
 
 });
 
@@ -397,7 +431,7 @@ bot.command('guess', async (ctx) => {
     });
 
     // Delete the command message
-    deleteMessage(ctx, ctx.message.message_id);
+    queueMessageDeletion(ctx, ctx.message.message_id);
 
   } catch (error) {
     console.error('Game error:', error);
@@ -503,15 +537,23 @@ bot.on('message', async (ctx) => {
         token: TokenType.SEND
       };
 
-      const sendUrl = generateSendUrl(winnerCommand);
+      // When a game winner is chosen
+      const url = generateSendUrl(winnerCommand);
+      const text = generateButtonText(winnerCommand.recipient, winnerCommand.amount, winnerCommand.token);
 
-      await sendHiddenMessage(ctx,
+
+      await ctx.reply(
         `🎉 We have a winner!\n` +
         `Winning number: ${game.winningNumber}\n` +
         `Winner: ${winningSendtag}\n\n` +
-        `${game.masterName} /send ${winningSendtag} ${game.amount} SEND.\n\n` +
-        sendUrl
-      );
+        text, {  //
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '💰 Send It', url }
+          ]]
+        },
+        disable_notification: true
+      });
 
       queueMessageDeletion(ctx, game.messageId);
       game.active = false;
