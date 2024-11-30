@@ -184,7 +184,7 @@ bot.command('send', async (ctx) => {
     await ctx.reply(text, {
       reply_markup: {
         inline_keyboard: [[
-          { text: '➡️ /send', url }
+          { text: '/send', url }
         ]]
       },
       disable_notification: true
@@ -215,7 +215,7 @@ bot.command('send', async (ctx) => {
           await ctx.reply(text, {
             reply_markup: {
               inline_keyboard: [[
-                { text: '➡️ /send', url }
+                { text: '/send', url }
               ]]
             },
             disable_notification: true
@@ -226,7 +226,7 @@ bot.command('send', async (ctx) => {
 
         // Otherwise parse amount/token
         const patterns = {
-          amount: /\d{1,3}(?:,\d{3})*(?:\.\d+)?/,         // Must have spaces around number
+          amount: /\d{1,3}(?:,\d{3})*(?:\.\d+)?/, // Must have spaces around number
           token: /\s+(SEND|USDC|ETH)(?:\s+|$)/i  // Must have space before token
         };
 
@@ -245,7 +245,7 @@ bot.command('send', async (ctx) => {
         await ctx.reply(text, {
           reply_markup: {
             inline_keyboard: [[
-              { text: '➡️ {/send', url }
+              { text: '/send', url }
             ]]
           },
           disable_notification: true
@@ -263,7 +263,6 @@ bot.command('send', async (ctx) => {
 // Add these at the top with other interfaces
 interface Player {
   sendtag: string;
-  messageId: number;
   userId: number;
 }
 
@@ -406,12 +405,17 @@ bot.command('guess', async (ctx) => {
     if (game) {
       const playerSendtags = game.players.map(player => player.sendtag).join(', ');
       const message = await ctx.reply(
-        `🎲 The game is on! Drop your sendtag to participate.\n` +
-        `First ${game.maxNumber} sendtags\n\n` +
+        `🎲 The game is on!\n` +
+        `First ${game.maxNumber} players\n\n` +
         `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
-        ` ${game.masterName} is sending it.\n`,
-        { disable_notification: true }
-      );
+        `${game.masterName} is sending it.\n`, {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '/join', callback_data: 'join_game' }
+          ]]
+        },
+        disable_notification: true
+      });
       queueMessageDeletion(ctx, game.messageId)
       queueMessageDeletion(ctx, ctx.message.message_id);
       game.messageId = message.message_id;
@@ -435,12 +439,17 @@ bot.command('guess', async (ctx) => {
 
     // Send initial message and store its ID
     const message = await ctx.reply(
-      `🎲 New game started! Drop your sendtag to participate.\n` +
-      `First ${maxNumber} sendtags\n\n` +
+      `🎲 New game started!\n` +
+      `First ${maxNumber} players\n\n` +
       `Players: _ \n\n` +
-      ` ${ctx.from?.first_name} is sending it.\n`,
-      { disable_notification: true }
-    );
+      `${ctx.from?.first_name} is sending ${amount} SEND\n`, {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '/join', callback_data: 'join_game' }
+        ]]
+      },
+      disable_notification: true
+    });
 
     // Create new game state for this chat
     activeGames.set(chatId, {
@@ -472,6 +481,85 @@ bot.command('guess', async (ctx) => {
   }
 });
 
+// Add this near your other handlers
+bot.action('join_game', async (ctx) => {
+  if (!ctx.chat || !ctx.callbackQuery || !ctx.from) return;
+
+  const chatId = ctx.chat.id;
+  const game = activeGames.get(chatId);
+
+  if (!game?.active) return;
+
+
+  // Check if user already participated
+  if (game.players.some(player => player.userId === ctx.from.id)) return;
+
+
+  // Parse sendtag from name like in send reply
+  const parsedName = ctx.from.first_name?.split('/');
+  const hasSendtag = parsedName !== undefined && parsedName.length > 1;
+  const cleanSendtag = hasSendtag && parsedName[1].replace(/[^a-zA-Z0-9_]/gu, '').trim();
+
+  if (!hasSendtag || !cleanSendtag) return;
+
+
+  // Add player to game
+  if (game.players.length < game.maxNumber) {
+    game.players.push({
+      sendtag: `/${cleanSendtag}`,
+      userId: ctx.from.id
+    });
+
+    // Update game message
+    const playerSendtags = game.players.map(player => player.sendtag).join(', ');
+    await ctx.editMessageText(
+      `🎲 The game is on!\n` +
+      `First ${game.maxNumber} players\n\n` +
+      `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
+      `${game.masterName} is sending ${game.amount} SEND.\n`, {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '/join', callback_data: 'join_game' }
+        ]]
+      }
+    });
+
+    // Handle game completion if needed
+    if (game.players.length >= game.maxNumber) {
+      const winningSendtag = game.players[game.winningNumber - 1].sendtag;
+      const winningRecipient = winningSendtag.split('/')[1];
+
+      const winnerCommand: SendCommand = {
+        recipient: winningRecipient,
+        amount: game.amount,
+        token: TokenType.SEND
+      };
+
+      // When a game winner is chosen
+      const url = generateSendUrl(winnerCommand);
+      const text = generateGameButtonText(winningSendtag, game);
+
+
+      await ctx.reply(
+        `🎉 Winner\n # ${game.winningNumber}!\n\n` +
+        text, {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: `/send`, url }
+          ]]
+        },
+        disable_notification: true
+      });
+
+      queueMessageDeletion(ctx, game.messageId);
+      game.active = false;
+      activeGames.delete(chatId);
+      await startCooldown(ctx, chatId);
+
+    }
+  }
+});
+
 
 bot.on('message', async (ctx) => {
   if (!ctx.chat || !('text' in ctx.message)) return;
@@ -487,11 +575,9 @@ bot.on('message', async (ctx) => {
 
 
   const cooldown = chatCooldowns.get(chatId);
-  const game = activeGames.get(chatId);
 
   // Regex patterns
   const anySendtagRegex = /\/[a-zA-Z0-9_]+/;
-  const exactSendtagRegex = /^\/([a-zA-Z0-9_]+)$/;
 
   // Handle cooldown period
   if (cooldown?.active && anySendtagRegex.test(text)) {
@@ -512,85 +598,6 @@ bot.on('message', async (ctx) => {
       }
     }
     return;
-  }
-
-  // Handle game entries
-  if (game?.active && exactSendtagRegex.test(text)) {
-    const match = text.match(exactSendtagRegex);
-    if (!match) return;
-
-    const userId = ctx.from?.id;
-    if (!userId) {
-      queueMessageDeletion(ctx, ctx.message.message_id);
-      return;
-    }
-
-    // Check if user already participated
-    if (game.players.some(player => player.userId === userId)) {
-      queueMessageDeletion(ctx, ctx.message.message_id);
-      return;
-    }
-
-    const sendtag = `/${match[1]}`;
-    queueMessageDeletion(ctx, ctx.message.message_id);
-
-    // Add player to game
-    if (game.players.length < game.maxNumber) {
-      game.players.push({
-        sendtag,
-        messageId: ctx.message.message_id,
-        userId: userId
-      });
-    }
-
-    // Update game message
-    try {
-      const playerSendtags = game.players.map(player => player.sendtag).join(', ');
-      await ctx.telegram.editMessageText(
-        chatId,
-        game.messageId,
-        undefined,
-        `🎲 The game is on! Drop your sendtag to participate.\n` +
-        `First ${game.maxNumber} sendtags\n\n` +
-        `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
-        ` ${game.masterName} is sending it.\n`,
-      );
-    } catch (error) {
-      console.log('Error updating message:', error);
-    }
-
-    // Handle game completion
-    if (game.players.length >= game.maxNumber) {
-      const winningSendtag = game.players[game.winningNumber - 1].sendtag;
-      const winningRecipient = winningSendtag.split('/')[1];
-
-      const winnerCommand: SendCommand = {
-        recipient: winningRecipient,
-        amount: game.amount,
-        token: TokenType.SEND
-      };
-
-      // When a game winner is chosen
-      const url = generateSendUrl(winnerCommand);
-      const text = generateGameButtonText(winningSendtag, game);
-
-
-      await ctx.reply(
-        `🎉 Winner # ${game.winningNumber}!\n` +
-        text, {  //
-        reply_markup: {
-          inline_keyboard: [[
-            { text: `${game.masterName} send ${winningRecipient}`, url }
-          ]]
-        },
-        disable_notification: true
-      });
-
-      queueMessageDeletion(ctx, game.messageId);
-      game.active = false;
-      activeGames.delete(chatId);
-      await startCooldown(ctx, chatId);
-    }
   }
 });
 
