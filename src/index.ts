@@ -478,6 +478,14 @@ bot.on('message', async (ctx) => {
   const chatId = ctx.chat.id;
   const text = ctx.message.text;
 
+  // Delete messages with multiple sendtags
+  const sendtagMatches = text.match(/\/[a-zA-Z0-9_]+/g);
+  if (sendtagMatches && sendtagMatches.length >= 2) {
+    queueMessageDeletion(ctx, ctx.message.message_id);
+    return;
+  }
+
+
   const cooldown = chatCooldowns.get(chatId);
   const game = activeGames.get(chatId);
 
