@@ -484,11 +484,17 @@ bot.action('join_game', async (ctx) => {
   const chatId = ctx.chat.id;
   const game = activeGames.get(chatId);
 
-  if (!game?.active) return;
+  if (!game?.active) {
+    await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'No active game!');
+    return
+  }
 
 
   // Check if user already participated
-  if (game.players.some(player => player.userId === ctx.from.id)) return;
+  if (game.players.some(player => player.userId === ctx.from.id)) {
+    await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'Already joined!');
+    return;
+  }
 
 
   // Parse sendtag from name like in send reply
@@ -496,7 +502,10 @@ bot.action('join_game', async (ctx) => {
   const hasSendtag = parsedName !== undefined && parsedName.length > 1;
   const cleanSendtag = hasSendtag && parsedName[1].replace(/[^a-zA-Z0-9_]/gu, '').trim();
 
-  if (!hasSendtag || !cleanSendtag) return;
+  if (!hasSendtag || !cleanSendtag) {
+    await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'Add sendtag to your name!');
+    return
+  }
 
 
   // Add player to game
@@ -505,6 +514,8 @@ bot.action('join_game', async (ctx) => {
       sendtag: `/${cleanSendtag}`,
       userId: ctx.from.id
     });
+
+    await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'Joined! 🎲');
 
     // Update game message
     const playerSendtags = game.players.map(player => player.sendtag).join(', ');
