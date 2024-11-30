@@ -226,13 +226,8 @@ bot.command('send', async (ctx) => {
         }
 
         // Otherwise parse amount/token
-        const patterns = {
-          amount: /\d{1,3}(?:,\d{3})*(?:\.\d+)?/, // Must have spaces around number
-          token: /\s+(SEND|USDC|ETH)(?:\s+|$)/i  // Must have space before token
-        };
-
-        const amountMatch = content.match(patterns.amount);
-        const tokenMatch = content.match(patterns.token);
+        const amountMatch = content.match(/^(\d{1,3}(?:,\d{3})*(?:\.\d+)?)/);
+        const tokenMatch = content.match(/\s*(SEND|USDC|ETH)\s*$/i);
 
         const command: SendCommand = {
           recipient: cleanSendtag,
