@@ -399,7 +399,7 @@ bot.command('guess', async (ctx) => {
 
     // Check if there's already an active game in this chat
     if (game) {
-      playerSendtags = game.players.map(player => player.sendtag).join(', ');
+      const playerSendtags = game.players.map(player => player.sendtag).join(', ');
       const message = await ctx.reply(
         `🎲 The game is on!\n` +
         `First ${game.maxNumber} players\n\n` +
@@ -596,12 +596,10 @@ bot.on('message', async (ctx) => {
     return;
   }
   const game = activeGames.get(chatId);
-  if (game?.active) {
-    const sendtagMatches = text.match(/\/[a-zA-Z0-9_]+/g);
-    if (sendtagMatches && sendtagMatches.length < 2) {
-      queueMessageDeletion(ctx, ctx.message.message_id);
-      return;
-    }
+  if (game?.active && anySendtagRegex.test(text)) {
+    // If game is active, delete ANY message containing a sendtag
+    queueMessageDeletion(ctx, ctx.message.message_id);
+    return;
   }
 });
 
