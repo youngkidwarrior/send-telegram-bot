@@ -226,8 +226,7 @@ bot.command('send', async (ctx) => {
         }
 
         // Otherwise parse amount/token
-        const amountMatch = content.match(/^\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*/);  // Numbers with optional commas
-        const _ = content.replace(/^.*?\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*/, '').trim();
+        const amountMatch = content.match(/(\d{1,3}(?:,\d{3})*(?:\.\d+)?)/);  // Just match the first number group
         const tokenMatch = content.match(/\s*(SEND|USDC|ETH)\s*$/i);
 
         const command: SendCommand = {
