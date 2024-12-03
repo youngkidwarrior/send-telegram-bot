@@ -201,7 +201,8 @@ bot.command('send', async (ctx) => {
     if (repliedToUser && !isReplyToSelf) {
       const parsedName = repliedToUser.first_name?.split('/');
       const hasSendtag = parsedName !== undefined && parsedName.length > 1
-      const cleanSendtag = hasSendtag && parsedName[1].replace(/[^a-zA-Z0-9_]/gu, '').trim();
+      const cleanSendtag = hasSendtag && parsedName[1].split(/[\s\u{1F300}-\u{1F9FF}]/u)[0].replace(/[^a-zA-Z0-9_]/gu, '').trim();
+
 
       if (hasSendtag && cleanSendtag) {
         // Check if there's any content after /send
@@ -226,7 +227,7 @@ bot.command('send', async (ctx) => {
         }
 
         // Otherwise parse amount/token
-        const amountMatch = content.match(/(\d{1,3}(?:,\d{3})*(?:\.\d+)?)/);  // Just match the first number group
+        const amountMatch = content.match(/(\d{1,3}(,\d{3})*(\.\d+)?|\d+(\.\d+)?)/);
         const tokenMatch = content.match(/\s*(SEND|USDC|ETH)\s*$/i);
 
         const command: SendCommand = {
@@ -420,15 +421,30 @@ bot.command('guess', async (ctx) => {
 
     // Parse the command arguments
     const args = ctx.message.text.split(' ');
-    let minNumber = 1;
-    let maxNumber = Math.floor(Math.random() * 20) + minNumber; // default
-    let amount = args[2] ?? "1000";
+    let minNumber = 3;
+    let maxNumber = Math.floor(Math.random() * 17) + minNumber; // default (3-20)ult amount
+    let amount = "1000";
 
 
-    if (!isNaN(parseInt(args[1]))) {
-      maxNumber = Math.max(minNumber, Math.min(parseInt(args[1]), 20));
+    if (args[1]) {
+      const arg = parseInt(args[1]);
+      if (!isNaN(arg)) {
+        if (arg >= 500) {
+          // If 500 or more, treat as amount
+          amount = arg.toString();
+        } else if (arg <= 20) {
+          // If between 3 and 20, treat as player count
+          if (args[2]) {
+            const explicitAmount = parseInt(args[2]);
+            if (!isNaN(explicitAmount) && explicitAmount >= 500) {
+              amount = explicitAmount.toString();
+            }
+          }
+          maxNumber = arg < minNumber ? minNumber : arg;
+
+        }
+      }
     }
-
 
     // Generate random number between 1 and maxNumber
     const winningNumber = Math.floor(Math.random() * maxNumber) + 1;
@@ -574,7 +590,8 @@ bot.on('message', async (ctx) => {
   const text = ctx.message.text;
 
   // Delete messages with multiple sendtags
-  const sendtagMatches = text.match(/\/[a-zA-Z0-9_]+/g);
+  const sendtagPattern = /(?<!https?:\/\/\S*)\/[a-zA-Z0-9_]+/g;
+  const sendtagMatches = text.match(sendtagPattern);
   if (sendtagMatches && sendtagMatches.length >= 2) {
     queueMessageDeletion(ctx, ctx.message.message_id);
     return;
