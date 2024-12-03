@@ -50,7 +50,7 @@ function parseSendCommand(text: string): SendCommand | null {
   // Match patterns in specific order
   const patterns = {
     sendtag: /\/([a-zA-Z0-9_]+)/,      // Must start with /
-    amount: /\d{1,3}(?:,\d{3})*(?:\.\d+)?/,         // Ensure it's a valid number format
+    amount: /(\d+)(,\d{3})*(\.\d+)?/,         // Ensure it's a valid number format
     token: /\s+(SEND|USDC|ETH)(?:\s+|$)/i  // Must have space before token
   };
 
@@ -64,8 +64,8 @@ function parseSendCommand(text: string): SendCommand | null {
   }
 
   const amountMatch = content.match(patterns.amount);
-  if (amountMatch?.[1]) {
-    params.amount = amountMatch[1];
+  if (amountMatch?.[0]) {
+    params.amount = amountMatch[0].replace(/,/g, '');  // Remove commas
   }
 
   const tokenMatch = content.match(patterns.token);
@@ -227,7 +227,8 @@ bot.command('send', async (ctx) => {
         }
 
         // Otherwise parse amount/token
-        const amountMatch = content.match(/(\d{1,3}(,\d{3})*(\.\d+)?|\d+(\.\d+)?)/);
+        const cleanContent = content.replace(/,/g, '');
+        const amountMatch = cleanContent.match(/\d+(\.\d+)?/);
         const tokenMatch = content.match(/\s*(SEND|USDC|ETH)\s*$/i);
 
         const command: SendCommand = {
