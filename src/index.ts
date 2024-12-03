@@ -441,7 +441,6 @@ bot.command('guess', async (ctx) => {
             }
           }
           maxNumber = arg < minNumber ? minNumber : arg;
-
         }
       }
     }
@@ -570,8 +569,7 @@ bot.action('join_game', async (ctx) => {
           inline_keyboard: [[
             { text: `/send`, url }
           ]]
-        },
-        disable_notification: true
+        }
       });
 
       queueMessageDeletion(ctx, game.messageId);
