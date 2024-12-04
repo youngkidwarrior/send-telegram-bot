@@ -562,14 +562,28 @@ bot.action('join_game', async (ctx) => {
 
     await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'Joined! 🎲');
 
+    // Create new message text
+    const playerSendtags = game.players.map(player => player.sendtag).join(', ');
+    const newText = `🎲 The game is on!\n` +
+      `First ${game.maxNumber} players\n\n` +
+      `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
+      `${game.masterName} is sending ${game.amount} SEND.\n`;
+
+
+    // Get current message
+    try {
+      const currentMsg = await ctx.telegram.getChat(chatId);
+      if (currentMsg && 'text' in currentMsg && currentMsg.text === newText) {
+        // Skip update if content is identical
+        return;
+      }
+    } catch (error) {
+      console.log('Error checking current message:', error);
+    }
+
     // Wrap the message update in retry logic
     await withRetry(async () => {
-      const playerSendtags = game.players.map(player => player.sendtag).join(', ');
-      await ctx.editMessageText(
-        `🎲 The game is on!\n` +
-        `First ${game.maxNumber} players\n\n` +
-        `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
-        `${game.masterName} is sending ${game.amount} SEND.\n`, {
+      await ctx.editMessageText(newText, {
         reply_markup: {
           inline_keyboard: [[
             { text: '/join', callback_data: 'join_game' }
