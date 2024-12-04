@@ -323,6 +323,7 @@ interface GameState {
   amount: string;
   masterId: number;
   masterName: string;
+  isProcessingWinner?: boolean;
 }
 // Add at the top with other interfaces
 interface DeleteTask {
@@ -388,6 +389,12 @@ const chatCooldowns: Map<number, {
 }> = new Map();
 
 async function startCooldown(ctx: Context, chatId: number) {
+  const existingCooldown = chatCooldowns.get(chatId);
+  if (existingCooldown?.active) {
+    // If there's already an active cooldown, don't start another one
+    return;
+  }
+
   const endTime = Math.floor(Date.now() / 1000) + 45;
 
   try {
@@ -405,17 +412,18 @@ async function startCooldown(ctx: Context, chatId: number) {
     };
     chatCooldowns.set(chatId, cooldown);
 
-    // Clear after 1 minute
+    // Clear after 30 seconds
     setTimeout(() => {
-      const cooldown = chatCooldowns.get(chatId)
-      chatCooldowns.delete(chatId)
+      const cooldown = chatCooldowns.get(chatId);
       if (cooldown?.messageId) {
+        chatCooldowns.delete(chatId);
         queueMessageDeletion(ctx, cooldown.messageId);
       }
     }, 30000);
 
   } catch (error) {
     console.error('Error starting cooldown:', error);
+    chatCooldowns.delete(chatId); // Clean up on error
   }
 }
 
@@ -638,39 +646,46 @@ bot.action('join_game', async (ctx) => {
     }
 
     // Handle game completion if needed
-    if (game.players.length >= game.maxNumber) {
-      const winningSendtag = game.players[game.winningNumber - 1].sendtag;
-      const winningRecipient = winningSendtag.split('/')[1];
+    if (game.players.length >= game.maxNumber && game.active) {
+      // Set processing flag
+      game.isProcessingWinner = true;
 
-      const winnerCommand: SendCommand = {
-        recipient: winningRecipient,
-        amount: game.amount,
-        token: TokenType.SEND
-      };
+      try {
+        const winningSendtag = game.players[game.winningNumber - 1].sendtag;
+        const winningRecipient = winningSendtag.split('/')[1];
 
-      // When a game winner is chosen
-      const url = generateSendUrl(winnerCommand);
-      const text = generateGameButtonText(winningSendtag, game);
+        const winnerCommand: SendCommand = {
+          recipient: winningRecipient,
+          amount: game.amount,
+          token: TokenType.SEND
+        };
 
+        const url = generateSendUrl(winnerCommand);
+        const text = generateGameButtonText(winningSendtag, game);
 
-      await ctx.reply(
-        `🎉 Winner\n # ${game.winningNumber}!\n\n` +
-        text, {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: `/send`, url }
-          ]]
-        }
-      });
+        // Deactivate game before sending winner message
+        game.active = false;
+        activeGames.delete(chatId);
 
-      queueMessageDeletion(ctx, game.messageId);
-      game.active = false;
-      activeGames.delete(chatId);
-      await startCooldown(ctx, chatId);
+        await ctx.reply(
+          `🎉 Winner\n # ${game.winningNumber}!\n\n` +
+          text, {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: `/send`, url }
+            ]]
+          }
+        });
 
+        await startCooldown(ctx, chatId);
+      } catch (error) {
+        console.error('Error processing winner:', error);
+        game.isProcessingWinner = false;
+      }
     }
   }
 });
+
 
 
 bot.on('message', async (ctx) => {
