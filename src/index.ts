@@ -1,9 +1,34 @@
 import { Telegraf, Context } from 'telegraf';
 import dotenv from 'dotenv';
-import { game } from 'telegraf/typings/button';
 
 dotenv.config();
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Add this utility function
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  initialDelay: number = 1000
+): Promise<T> {
+  let lastError;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+      if (error?.response?.error_code === 429) {
+        const retryAfter = (error.response.parameters?.retry_after || 1) * 1000;
+        console.log(`Rate limited. Waiting ${retryAfter}ms before retry ${i + 1}/${maxRetries}`);
+        await sleep(retryAfter);
+        continue;
+      }
+      throw error;
+    }
+    await sleep(initialDelay * Math.pow(2, i)); // Exponential backoff
+  }
+  throw lastError;
+}
 // Initialize bot with your token
 const bot = new Telegraf(process.env.BOT_TOKEN ?? "");
 
@@ -316,9 +341,11 @@ async function processDeleteQueue() {
     if (!task) continue;
 
     try {
-      await bot.telegram.deleteMessage(task.chatId, task.messageId);
-      // Add small delay between deletions to prevent rate limiting
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await withRetry(async () => {
+        await bot.telegram.deleteMessage(task.chatId, task.messageId);
+      });
+      // Increase delay between deletions
+      await sleep(100); // 100ms between deletions
     } catch (error) {
       console.log('Error deleting message:', error);
     }
@@ -502,7 +529,7 @@ bot.action('join_game', async (ctx) => {
 
   if (!game?.active) {
     await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'No active game!');
-    return
+    return;
   }
 
 
@@ -533,18 +560,20 @@ bot.action('join_game', async (ctx) => {
 
     await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'Joined! 🎲');
 
-    // Update game message
-    const playerSendtags = game.players.map(player => player.sendtag).join(', ');
-    await ctx.editMessageText(
-      `🎲 The game is on!\n` +
-      `First ${game.maxNumber} players\n\n` +
-      `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
-      `${game.masterName} is sending ${game.amount} SEND.\n`, {
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '/join', callback_data: 'join_game' }
-        ]]
-      }
+    // Wrap the message update in retry logic
+    await withRetry(async () => {
+      const playerSendtags = game.players.map(player => player.sendtag).join(', ');
+      await ctx.editMessageText(
+        `🎲 The game is on!\n` +
+        `First ${game.maxNumber} players\n\n` +
+        `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
+        `${game.masterName} is sending ${game.amount} SEND.\n`, {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '/join', callback_data: 'join_game' }
+          ]]
+        }
+      });
     });
 
     // Handle game completion if needed
