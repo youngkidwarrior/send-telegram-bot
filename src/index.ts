@@ -75,10 +75,9 @@ function parseSendCommand(text: string): SendCommand | null {
   // Match patterns in specific order
   const patterns = {
     sendtag: /\/([a-zA-Z0-9_]+)/,      // Must start with /
-    amount: /(\d+)(,\d{3})*(\.\d+)?/,         // Ensure it's a valid number format
-    token: /\s+(SEND|USDC|ETH)(?:\s+|$)/i  // Must have space before token
+    amount: /(\d+(?:\.\d+)?)/,         // number format
+    token: /(SEND|USDC|ETH)(?:\s+|$)/i  // More lenient token match
   };
-
   const sendtagMatch = content.match(patterns.sendtag);
   if (!sendtagMatch?.[1]) {
     return null;
@@ -86,14 +85,17 @@ function parseSendCommand(text: string): SendCommand | null {
 
   const params: SendCommand = {
     recipient: sendtagMatch[1],
+  };
+
+  // Extract amount - search after sendtag
+  const afterSendtag = content.slice(content.indexOf(sendtagMatch[0]) + sendtagMatch[0].length);
+  const amountMatch = afterSendtag.match(patterns.amount);
+  if (amountMatch?.[1]) {
+    params.amount = amountMatch[1];
   }
 
-  const amountMatch = content.match(patterns.amount);
-  if (amountMatch?.[0]) {
-    params.amount = amountMatch[0].replace(/,/g, '');  // Remove commas
-  }
-
-  const tokenMatch = content.match(patterns.token);
+  // Extract token - search after amount if exists
+  const tokenMatch = afterSendtag.match(patterns.token);
   if (tokenMatch?.[1]) {
     params.token = tokenMatch[1].toUpperCase() as TokenType;
   }
@@ -253,8 +255,8 @@ bot.command('send', async (ctx) => {
 
         // Otherwise parse amount/token
         const cleanContent = content.replace(/,/g, '');
-        const amountMatch = cleanContent.match(/\d+(\.\d+)?/);
-        const tokenMatch = content.match(/\s*(SEND|USDC|ETH)\s*$/i);
+        const amountMatch = cleanContent.match(/(\d+(?:\.\d+)?)/);
+        const tokenMatch = cleanContent.match(/(SEND|USDC|ETH)(?:\s+|$)/i);
 
         const command: SendCommand = {
           recipient: cleanSendtag,
