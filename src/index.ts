@@ -12,21 +12,41 @@ async function withRetry<T>(
   initialDelay: number = 1000
 ): Promise<T> {
   let lastError;
+
   for (let i = 0; i < maxRetries; i++) {
     try {
+      if (i > 0) {
+        // Add exponential backoff before retries
+        await sleep(initialDelay * Math.pow(2, i - 1));
+      }
       return await fn();
     } catch (error: any) {
       lastError = error;
+
+      // Don't retry if message not found
+      if (error?.response?.description?.includes('message to edit not found')) {
+        throw error;
+      }
+
+      // Ignore "message not modified" error
+      if (error?.response?.description?.includes('message is not modified')) {
+        return error.response as T;
+      }
+
       if (error?.response?.error_code === 429) {
         const retryAfter = (error.response.parameters?.retry_after || 1) * 1000;
         console.log(`Rate limited. Waiting ${retryAfter}ms before retry ${i + 1}/${maxRetries}`);
         await sleep(retryAfter);
         continue;
       }
-      throw error;
+
+      // If we're on the last try, throw the error
+      if (i === maxRetries - 1) {
+        throw error;
+      }
     }
-    await sleep(initialDelay * Math.pow(2, i)); // Exponential backoff
   }
+
   throw lastError;
 }
 // Initialize bot with your token
@@ -554,6 +574,7 @@ bot.action('join_game', async (ctx) => {
 
 
   // Add player to game
+
   if (game.players.length < game.maxNumber) {
     game.players.push({
       sendtag: `/${cleanSendtag}`,
@@ -562,35 +583,59 @@ bot.action('join_game', async (ctx) => {
 
     await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'Joined! 🎲');
 
-    // Create new message text
+    // Create message text
     const playerSendtags = game.players.map(player => player.sendtag).join(', ');
-    const newText = `🎲 The game is on!\n` +
+    const messageText = `🎲 The game is on!\n` +
       `First ${game.maxNumber} players\n\n` +
       `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
       `${game.masterName} is sending ${game.amount} SEND.\n`;
 
-
-    // Get current message
-    try {
-      const currentMsg = await ctx.telegram.getChat(chatId);
-      if (currentMsg && 'text' in currentMsg && currentMsg.text === newText) {
-        // Skip update if content is identical
-        return;
+    const messageOptions = {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '/join', callback_data: 'join_game' }
+        ]]
       }
-    } catch (error) {
-      console.log('Error checking current message:', error);
-    }
+    };
 
-    // Wrap the message update in retry logic
-    await withRetry(async () => {
-      await ctx.editMessageText(newText, {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '/join', callback_data: 'join_game' }
-          ]]
-        }
+    try {
+      // Try to edit existing message
+      await withRetry(async () => {
+        await ctx.editMessageText(messageText, messageOptions);
       });
-    });
+    } catch (error: any) {
+      if (error?.response?.description?.includes('message to edit not found')) {
+        // If edit fails, send new message and update game state
+        try {
+          // Delete old message if it exists
+          if (game.messageId) {
+            try {
+              await queueMessageDeletion(ctx, game.messageId);
+            } catch (deleteError) {
+              console.log('Failed to delete old message:', deleteError);
+            }
+          }
+
+          // Send new message
+          const newMessage = await ctx.telegram.sendMessage(
+            chatId,
+            messageText,
+            {
+              ...messageOptions,
+              disable_notification: true
+            }
+          );
+
+          // Update game state with new message ID
+          game.messageId = newMessage.message_id;
+        } catch (sendError) {
+          console.error('Failed to send new message:', sendError);
+        }
+      } else {
+        // If it's not a "message not found" error, rethrow
+        throw error;
+      }
+    }
 
     // Handle game completion if needed
     if (game.players.length >= game.maxNumber) {
@@ -633,14 +678,24 @@ bot.on('message', async (ctx) => {
   const chatId = ctx.chat.id;
   const text = ctx.message.text;
 
-  // Delete messages with multiple sendtags
-  const sendtagPattern = /(?<!https?:\/\/\S*)\/[a-zA-Z0-9_]+/g;
-  const sendtagMatches = text.match(sendtagPattern);
+  // Delete messages with multiple sendtags that aren't part of URLs
+  const urlPattern = /(https?:\/\/[^\s]+)/g;
+
+  // First, remove all URLs from the text for sendtag checking
+  let textWithoutUrls = text;
+  const urls = text.match(urlPattern) || [];
+  urls.forEach(url => {
+    textWithoutUrls = textWithoutUrls.replace(url, '');
+  });
+
+  // Now check for sendtags in the remaining text
+  const sendtagPattern = /\/[a-zA-Z0-9_]+/g;
+  const sendtagMatches = textWithoutUrls.match(sendtagPattern);
+
   if (sendtagMatches && sendtagMatches.length >= 2) {
     queueMessageDeletion(ctx, ctx.message.message_id);
     return;
   }
-
 
   const cooldown = chatCooldowns.get(chatId);
 
@@ -648,7 +703,7 @@ bot.on('message', async (ctx) => {
   const anySendtagRegex = /\/[a-zA-Z0-9_]+/;
 
   // Handle cooldown period
-  if (cooldown?.active && anySendtagRegex.test(text)) {
+  if (cooldown?.active && sendtagMatches) {
     queueMessageDeletion(ctx, ctx.message.message_id);
 
     const now = Date.now();
@@ -668,8 +723,8 @@ bot.on('message', async (ctx) => {
     return;
   }
   const game = activeGames.get(chatId);
-  if (game?.active && anySendtagRegex.test(text)) {
-    // If game is active, delete ANY message containing a sendtag
+  if (game?.active && sendtagMatches) {
+    // If game is active, delete messages with sendtags that aren't in URLs
     queueMessageDeletion(ctx, ctx.message.message_id);
     return;
   }
