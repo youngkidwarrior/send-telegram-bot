@@ -323,7 +323,6 @@ interface GameState {
   amount: string;
   masterId: number;
   masterName: string;
-  isProcessingWinner?: boolean;
 }
 // Add at the top with other interfaces
 interface DeleteTask {
@@ -389,16 +388,7 @@ const chatCooldowns: Map<number, {
 }> = new Map();
 
 async function startCooldown(ctx: Context, chatId: number) {
-  const existingCooldown = chatCooldowns.get(chatId);
-  if (existingCooldown?.active) {
-    // If there's already an active cooldown, don't start another one
-    return;
-  }
-
-  const endTime = Math.floor(Date.now() / 1000) + 45;
-
   try {
-    // Send cooldown message
     const cooldownMsg = await ctx.reply(
       `⏳ Sendtag Cooldown: 45 sec`,
       { disable_notification: true }
@@ -408,7 +398,7 @@ async function startCooldown(ctx: Context, chatId: number) {
       active: true,
       messageId: cooldownMsg.message_id,
       lastUpdate: Date.now(),
-      endTime: endTime,
+      endTime: Math.floor(Date.now() / 1000) + 45,
     };
     chatCooldowns.set(chatId, cooldown);
 
@@ -423,7 +413,7 @@ async function startCooldown(ctx: Context, chatId: number) {
 
   } catch (error) {
     console.error('Error starting cooldown:', error);
-    chatCooldowns.delete(chatId); // Clean up on error
+    chatCooldowns.delete(chatId);
   }
 }
 
@@ -647,9 +637,6 @@ bot.action('join_game', async (ctx) => {
 
     // Handle game completion if needed
     if (game.players.length >= game.maxNumber && game.active) {
-      // Set processing flag
-      game.isProcessingWinner = true;
-
       try {
         const winningSendtag = game.players[game.winningNumber - 1].sendtag;
         const winningRecipient = winningSendtag.split('/')[1];
@@ -663,10 +650,14 @@ bot.action('join_game', async (ctx) => {
         const url = generateSendUrl(winnerCommand);
         const text = generateGameButtonText(winningSendtag, game);
 
-        // Deactivate game before sending winner message
+        // Delete the game message first
+        await queueMessageDeletion(ctx, game.messageId);
+
+        // Deactivate game
         game.active = false;
         activeGames.delete(chatId);
 
+        // Send winner message
         await ctx.reply(
           `🎉 Winner\n # ${game.winningNumber}!\n\n` +
           text, {
@@ -674,17 +665,21 @@ bot.action('join_game', async (ctx) => {
             inline_keyboard: [[
               { text: `/send`, url }
             ]]
-          }
+          },
+          disable_notification: true
         });
 
+        // Start cooldown after winner is announced
         await startCooldown(ctx, chatId);
       } catch (error) {
         console.error('Error processing winner:', error);
-        game.isProcessingWinner = false;
+        // Re-enable game if winner processing fails
+        game.active = true;
       }
     }
   }
 });
+
 
 
 
@@ -714,8 +709,7 @@ bot.on('message', async (ctx) => {
 
   const cooldown = chatCooldowns.get(chatId);
 
-  // Regex patterns
-  const anySendtagRegex = /\/[a-zA-Z0-9_]+/;
+
 
   // Handle cooldown period
   if (cooldown?.active && sendtagMatches) {
