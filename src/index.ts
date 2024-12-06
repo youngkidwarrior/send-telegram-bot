@@ -623,42 +623,42 @@ bot.action('join_game', async (ctx) => {
             );
           });
         }
-
         // Process winner if game is full
         if (game.players.length >= game.maxNumber) {
-          game.active = false;
-          const winner = game.players[game.winningNumber - 1];
-          const winningRecipient = winner.sendtag.split('/')[1];
+          const deletedGame = activeGames.get(chatId);
+          activeGames.delete(chatId);
+          if (deletedGame?.active) {
+            const winner = game.players[game.winningNumber - 1];
+            const winningRecipient = winner.sendtag.split('/')[1];
 
-          const winnerCommand = {
-            recipient: winningRecipient,
-            amount: game.amount,
-            token: TokenType.SEND
-          };
+            const winnerCommand = {
+              recipient: winningRecipient,
+              amount: game.amount,
+              token: TokenType.SEND
+            };
 
-          const url = generateSendUrl(winnerCommand);
-          const text = generateGameButtonText(winner, game);
+            const url = generateSendUrl(winnerCommand);
+            const text = generateGameButtonText(winner, game);
 
-          await withRetry(async () => {
-            // Delete game state first
-            activeGames.delete(chatId);
+            await withRetry(async () => {
 
-            // Delete game message
-            await queueMessageDeletion(ctx, game.messageId);
+              // Delete game message
+              await queueMessageDeletion(ctx, game.messageId);
 
-            // Send winner message
-            await ctx.reply(
-              `🎉 Winner\n # ${game.winningNumber}!\n\n${text}`,
-              {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                  inline_keyboard: [[{ text: `/send`, url }]]
+              // Send winner message
+              await ctx.reply(
+                `🎉 Winner\n # ${game.winningNumber} out of ${game.maxNumber}!\n\n${text}`,
+                {
+                  parse_mode: 'Markdown',
+                  reply_markup: {
+                    inline_keyboard: [[{ text: `/send`, url }]]
+                  }
                 }
-              }
-            );
+              );
 
-            await startCooldown(ctx, chatId);
-          });
+              await startCooldown(ctx, chatId);
+            });
+          }
         }
       } catch (error) {
         console.error('Error processing batch:', error);
