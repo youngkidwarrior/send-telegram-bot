@@ -321,20 +321,33 @@ let isProcessingQueue = false;
 async function queueMessageDeletion(ctx: Context, messageId: number) {
   if (!ctx.chat) return;
 
-  const task = {
-    chatId: ctx.chat.id,
-    messageId: messageId
-  };
+  try {
+    // Check if message is from an admin
+    if (ctx.from) {
+      const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
+      if (['administrator', 'creator'].includes(member.status)) {
+        return; // Don't delete admin messages
+      }
+    }
 
-  // If it's our bot's message, prioritize it
-  if (ctx.from?.id === bot.botInfo?.id) {
-    deleteQueue.unshift(task);
-  } else {
-    deleteQueue.push(task);
+    const task = {
+      chatId: ctx.chat.id,
+      messageId: messageId
+    };
+
+    // If it's our bot's message, prioritize it
+    if (ctx.from?.id === bot.botInfo?.id) {
+      deleteQueue.unshift(task);
+    } else {
+      deleteQueue.push(task);
+    }
+
+    if (!isProcessingQueue) {
+      processDeleteQueue();
+    }
   }
-
-  if (!isProcessingQueue) {
-    processDeleteQueue();
+  catch (error) {
+    console.log('Error checking admin status:', error);
   }
 }
 
