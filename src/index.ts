@@ -154,8 +154,8 @@ function generateButtonText(sender: string, recipient: string, amount?: string, 
     `➡️ ${sender} is sending to /${recipient}`;
 }
 
-function generateGameButtonText(winner: string, game: GameState): string {
-  return `➡️ ${game.masterName} send ${game.amount} to ${winner}`
+function generateGameButtonText(winner: Player, game: GameState): string {
+  return `➡️ [](tg://user?id=${game.masterId})${game.masterName} send ${game.amount} to ${winner.sendtag}[](tg://user?id=${winner.userId})`
 }
 
 async function deleteMessage(ctx: Context, messageId: number) {
@@ -425,7 +425,7 @@ let activeGames: Map<number, GameState> = new Map();
 
 bot.command('guess', async (ctx) => {
   try {
-    if (!ctx.chat) return;
+    if (!ctx.chat || Boolean(ctx.message.reply_to_message)) return;
     const chatId = ctx.chat.id;
     let game = activeGames.get(chatId);
     let cooldown = chatCooldowns.get(chatId);
@@ -620,7 +620,7 @@ bot.action('join_game', async (ctx) => {
           };
 
           const url = generateSendUrl(winnerCommand);
-          const text = generateGameButtonText(winner.sendtag, game);
+          const text = generateGameButtonText(winner, game);
 
           await withRetry(async () => {
             // Delete game state first
@@ -633,6 +633,7 @@ bot.action('join_game', async (ctx) => {
             await ctx.reply(
               `🎉 Winner\n # ${game.winningNumber}!\n\n${text}`,
               {
+                parse_mode: 'Markdown',
                 reply_markup: {
                   inline_keyboard: [[{ text: `/send`, url }]]
                 }
