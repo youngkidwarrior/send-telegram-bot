@@ -585,29 +585,31 @@ bot.action('join_game', async (ctx) => {
         }));
 
         // Update game message
-        const playerSendtags = game.players.map(player => player.sendtag).join(', ');
-        const messageText = `🎲 The game is on!\n` +
-          `First ${game.maxNumber} players\n\n` +
-          `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
-          `${game.masterName} is sending ${game.amount} SEND.\n`;
+        if (game.players.length < game.maxNumber) {
+          const playerSendtags = game.players.map(player => player.sendtag).join(', ');
+          const messageText = `🎲 The game is on!\n` +
+            `First ${game.maxNumber} players\n\n` +
+            `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
+            `${game.masterName} is sending ${game.amount} SEND.\n`;
 
-        const messageOptions = {
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '/join', callback_data: 'join_game' }
-            ]]
-          }
-        };
-        // Update message with retry
-        await withRetry(async () => {
-          await ctx.telegram.editMessageText(
-            chatId,
-            game.messageId,
-            undefined,
-            messageText,
-            messageOptions
-          );
-        });
+          const messageOptions = {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '/join', callback_data: 'join_game' }
+              ]]
+            }
+          };
+          // Update message with retry
+          await withRetry(async () => {
+            await ctx.telegram.editMessageText(
+              chatId,
+              game.messageId,
+              undefined,
+              messageText,
+              messageOptions
+            );
+          });
+        }
 
         // Process winner if game is full
         if (game.players.length >= game.maxNumber) {
