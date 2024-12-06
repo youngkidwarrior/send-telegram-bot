@@ -155,7 +155,7 @@ function generateButtonText(sender: string, recipient: string, amount?: string, 
 }
 
 function generateGameButtonText(winner: Player, game: GameState): string {
-  return `➡️ [](tg://user?id=${game.masterId})${game.masterName} send ${game.amount} to ${winner.sendtag}[](tg://user?id=${winner.userId})`
+  return `➡️ [‎](tg://user?id=${game.masterId}) ${game.masterName} send ${game.amount} to ${winner.sendtag} [‎](tg://user?id=${winner.userId})`
 }
 
 async function deleteMessage(ctx: Context, messageId: number) {
@@ -267,7 +267,8 @@ bot.command('send', async (ctx) => {
                 { text: '/send', url }
               ]]
             },
-            disable_notification: true
+            reply_parameters: { message_id: ctx.message.reply_to_message.message_id, allow_sending_without_reply: true },
+            disable_notification: true,
           });
           queueMessageDeletion(ctx, ctx.message.message_id);
           return;
@@ -293,7 +294,8 @@ bot.command('send', async (ctx) => {
               { text: '/send', url }
             ]]
           },
-          disable_notification: true
+          reply_parameters: { message_id: ctx.message.reply_to_message.message_id, allow_sending_without_reply: true },
+          disable_notification: true,
         });
         queueMessageDeletion(ctx, ctx.message.message_id);
         return;
