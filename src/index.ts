@@ -305,25 +305,6 @@ bot.command('send', async (ctx) => {
 
 });
 
-// Add these at the top with other interfaces
-interface Player {
-  sendtag: string;
-  userId: number;
-}
-
-
-// Replace the current game tracking with channel-specific tracking
-interface GameState {
-  winningNumber: number;
-  active: boolean;
-  players: Player[];
-  chatId: number;
-  messageId: number;
-  maxNumber: number;
-  amount: string;
-  masterId: number;
-  masterName: string;
-}
 // Add at the top with other interfaces
 interface DeleteTask {
   chatId: number;
@@ -376,8 +357,7 @@ async function processDeleteQueue() {
   isProcessingQueue = false;
 }
 
-// Track games by chat ID
-let activeGames: Map<number, GameState> = new Map();
+
 
 // Add with other global variables
 const chatCooldowns: Map<number, {
@@ -417,23 +397,31 @@ async function startCooldown(ctx: Context, chatId: number) {
   }
 }
 
-bot.command('kill', async (ctx) => {
-  if (!ctx.chat) return;
-  const chatId = ctx.chat.id;
-  let game = activeGames.get(chatId);
-  if (game && ctx.from?.id === game.masterId) {
-    game.active = false;
-    activeGames.delete(chatId);
-    await ctx.telegram.editMessageText(
-      chatId,
-      game.messageId,
-      undefined,
-      `🎲 Game killed by game master.`
-    );
-    queueMessageDeletion(ctx, ctx.message.message_id);
-    return
-  }
-})
+
+
+// Add these at the top with other interfaces
+interface Player {
+  sendtag: string;
+  userId: number;
+  callbackQueryId: string;
+}
+
+
+// Replace the current game tracking with channel-specific tracking
+interface GameState {
+  winningNumber: number;
+  active: boolean;
+  players: Player[];
+  chatId: number;
+  messageId: number;
+  maxNumber: number;
+  amount: string;
+  masterId: number;
+  masterName: string;
+}
+
+// Track games by chat ID
+let activeGames: Map<number, GameState> = new Map();
 
 bot.command('guess', async (ctx) => {
   try {
@@ -540,6 +528,9 @@ bot.command('guess', async (ctx) => {
   }
 });
 
+const pendingPlayers = new Map<number, Set<Player>>();
+const COLLECTION_WINDOW = 1000; // 1 second window to collect clicks
+
 // Add this near your other handlers
 bot.action('join_game', async (ctx) => {
   if (!ctx.chat || !ctx.callbackQuery || !ctx.from) return;
@@ -550,15 +541,8 @@ bot.action('join_game', async (ctx) => {
   if (!game?.active) {
     await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'No active game!');
     return;
+
   }
-
-
-  // Check if user already participated
-  if (game.players.some(player => player.userId === ctx.from.id)) {
-    await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'Already joined!');
-    return;
-  }
-
 
   // Parse sendtag from name like in send reply
   const parsedName = ctx.from.first_name?.split('/');
@@ -570,113 +554,113 @@ bot.action('join_game', async (ctx) => {
     return
   }
 
-
-  // Add player to game
-
-  if (game.players.length < game.maxNumber) {
-    game.players.push({
-      sendtag: `/${cleanSendtag}`,
-      userId: ctx.from.id
-    });
-
-    await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'Joined! 🎲');
-
-    // Create message text
-    const playerSendtags = game.players.map(player => player.sendtag).join(', ');
-    const messageText = `🎲 The game is on!\n` +
-      `First ${game.maxNumber} players\n\n` +
-      `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
-      `${game.masterName} is sending ${game.amount} SEND.\n`;
-
-    const messageOptions = {
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '/join', callback_data: 'join_game' }
-        ]]
-      }
-    };
-
-    try {
-      // Try to edit existing message
-      await withRetry(async () => {
-        await ctx.editMessageText(messageText, messageOptions);
-      });
-    } catch (error: any) {
-      if (error?.response?.description?.includes('message to edit not found')) {
-        // If edit fails, send new message and update game state
-        try {
-          // Delete old message if it exists
-          if (game.messageId) {
-            try {
-              await queueMessageDeletion(ctx, game.messageId);
-            } catch (deleteError) {
-              console.log('Failed to delete old message:', deleteError);
-            }
-          }
-
-          // Send new message
-          const newMessage = await ctx.telegram.sendMessage(
-            chatId,
-            messageText,
-            {
-              ...messageOptions,
-              disable_notification: true
-            }
-          );
-
-          // Update game state with new message ID
-          game.messageId = newMessage.message_id;
-        } catch (sendError) {
-          console.error('Failed to send new message:', sendError);
-        }
-      } else {
-        // If it's not a "message not found" error, rethrow
-        throw error;
-      }
-    }
-
-    // Handle game completion if needed
-    if (game.players.length >= game.maxNumber && game.active) {
+  if (!pendingPlayers.has(chatId)) {
+    pendingPlayers.set(chatId, new Set());
+    // Process after collection window
+    setTimeout(async () => {
       try {
-        const winningSendtag = game.players[game.winningNumber - 1].sendtag;
-        const winningRecipient = winningSendtag.split('/')[1];
+        const players = Array.from(pendingPlayers.get(chatId) || []);
+        pendingPlayers.delete(chatId);
 
-        const winnerCommand: SendCommand = {
-          recipient: winningRecipient,
-          amount: game.amount,
-          token: TokenType.SEND
-        };
+        // Take first N players
+        const availableSlots = game.maxNumber - game.players.length;
+        const newPlayers = players.slice(0, availableSlots);
+        game.players.push(...newPlayers);
 
-        const url = generateSendUrl(winnerCommand);
-        const text = generateGameButtonText(winningSendtag, game);
+        // Notify players of their position or if they missed out
+        await Promise.all(players.map(async (player, index) => {
+          const position = game.players.length - newPlayers.length + index + 1;
+          try {
+            await ctx.telegram.answerCbQuery(
+              player.callbackQueryId,
+              index < availableSlots
+                ? `You're #${position} of ${game.maxNumber} 🎲`
+                : `Game filled up! You were #${index + 1} 😢`
+            );
+          } catch (error) {
+            console.error('Error notifying player:', error);
+          }
+        }));
 
-        // Delete the game message first
-        await queueMessageDeletion(ctx, game.messageId);
+        // Update game message
+        const playerSendtags = game.players.map(player => player.sendtag).join(', ');
+        const messageText = `🎲 The game is on!\n` +
+          `First ${game.maxNumber} players\n\n` +
+          `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
+          `${game.masterName} is sending ${game.amount} SEND.\n`;
 
-        // Deactivate game
-        game.active = false;
-        activeGames.delete(chatId);
-
-        // Send winner message
-        await ctx.reply(
-          `🎉 Winner\n # ${game.winningNumber}!\n\n` +
-          text, {
+        const messageOptions = {
           reply_markup: {
             inline_keyboard: [[
-              { text: `/send`, url }
+              { text: '/join', callback_data: 'join_game' }
             ]]
-          },
-          disable_notification: true
+          }
+        };
+        // Update message with retry
+        await withRetry(async () => {
+          await ctx.telegram.editMessageText(
+            chatId,
+            game.messageId,
+            undefined,
+            messageText,
+            messageOptions
+          );
         });
 
-        // Start cooldown after winner is announced
-        await startCooldown(ctx, chatId);
+        // Process winner if game is full
+        if (game.players.length >= game.maxNumber) {
+          game.active = false;
+          const winner = game.players[game.winningNumber - 1];
+          const winningRecipient = winner.sendtag.split('/')[1];
+
+          const winnerCommand = {
+            recipient: winningRecipient,
+            amount: game.amount,
+            token: TokenType.SEND
+          };
+
+          const url = generateSendUrl(winnerCommand);
+          const text = generateGameButtonText(winner.sendtag, game);
+
+          await withRetry(async () => {
+            // Delete game state first
+            activeGames.delete(chatId);
+
+            // Delete game message
+            await queueMessageDeletion(ctx, game.messageId);
+
+            // Send winner message
+            await ctx.reply(
+              `🎉 Winner\n # ${game.winningNumber}!\n\n${text}`,
+              {
+                reply_markup: {
+                  inline_keyboard: [[{ text: `/send`, url }]]
+                }
+              }
+            );
+
+            await startCooldown(ctx, chatId);
+          });
+        }
       } catch (error) {
-        console.error('Error processing winner:', error);
-        // Re-enable game if winner processing fails
-        game.active = true;
+        console.error('Error processing batch:', error);
       }
-    }
+    }, COLLECTION_WINDOW);
+  }
+  // Add player to pending set
+  if (!game.players.some(p => p.userId === ctx.from.id)) {
+    pendingPlayers.get(chatId)?.add({
+      sendtag: `/${cleanSendtag}`,
+      userId: ctx.from.id,
+      callbackQueryId: ctx.callbackQuery.id
+    });
+
+    await ctx.telegram.answerCbQuery(
+      ctx.callbackQuery.id,
+      `Processing...  🎲`
+    );
+  } else {
+    await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'Already joined!');
   }
 });
 
@@ -738,6 +722,24 @@ bot.on('message', async (ctx) => {
     return;
   }
 });
+
+bot.command('kill', async (ctx) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  let game = activeGames.get(chatId);
+  if (game && ctx.from?.id === game.masterId) {
+    game.active = false;
+    activeGames.delete(chatId);
+    await ctx.telegram.editMessageText(
+      chatId,
+      game.messageId,
+      undefined,
+      `🎲 Game killed by game master.`
+    );
+    queueMessageDeletion(ctx, ctx.message.message_id);
+    return
+  }
+})
 
 
 // Handle errors
