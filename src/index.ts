@@ -92,12 +92,208 @@ const TOKEN_CONFIG: Record<TokenType, TokenConfig> = {
 const SEND_URL = 'https://send.app/send';
 const BASE_URL = 'https://send.app/send/confirm';
 
+// Add at the top with other interfaces
+interface DeleteTask {
+  chatId: number;
+  messageId: number;
+}
+
+// Add with other global variables
+const deleteQueue: DeleteTask[] = [];
+let isProcessingQueue = false;
+
+// Add this new function to handle deletions
+async function queueMessageDeletion(ctx: Context | CommandContext, messageId: number) {
+  if (!ctx.chat) return;
+
+  try {
+    const isCommand = ctx?.message && ('entities' in ctx.message) && ctx.message.entities?.some(entity => entity.type === 'bot_command' && entity.offset === 0);
+    // Check if message is from an admin
+    if (ctx.from && !ctx.from.is_bot && !isCommand) {
+
+      const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
+      if (['administrator', 'creator'].includes(member.status)) {
+        return; // Don't delete admin messages
+      }
+    }
+
+    const task = {
+      chatId: ctx.chat.id,
+      messageId: messageId
+    };
+
+    // If it's our bot's message, prioritize it
+    if (ctx.from?.id === bot.botInfo?.id) {
+      deleteQueue.unshift(task);
+    } else {
+      deleteQueue.push(task);
+    }
+
+    if (!isProcessingQueue) {
+      processDeleteQueue();
+    }
+  }
+  catch (error) {
+    console.log('Error checking admin status:', error);
+  }
+}
+
+async function processDeleteQueue() {
+  isProcessingQueue = true;
+
+  while (deleteQueue.length > 0) {
+    const task = deleteQueue.shift();
+    if (!task) continue;
+
+    try {
+      await withRetry(async () => {
+        await bot.telegram.deleteMessage(task.chatId, task.messageId);
+      });
+      // Increase delay between deletions
+      await sleep(100); // 100ms between deletions
+    } catch (error) {
+      console.log('Error deleting message:', error);
+    }
+  }
+
+  isProcessingQueue = false;
+}
+
+
 interface SendCommand {
   recipient: string;
   amount?: string;
   token?: TokenType;
   note?: string;
 }
+
+function generateSendUrl(command: SendCommand): string {
+  const params: Record<string, string> = {
+    idType: 'tag',
+    recipient: command.recipient,
+  };
+
+  const tokenConfig = TOKEN_CONFIG[command.token ?? "SEND"];
+  if (tokenConfig.address) {
+    params.sendToken = tokenConfig.address;
+  }
+
+  let amount = parseFloat(command.amount?.replace(/,/g, '') ?? "");
+  if (!isNaN(amount) && amount > 0.) {
+    const amountInSmallestUnit = amount * Number(10n ** tokenConfig.decimals);
+    params.amount = BigInt(Math.round(amountInSmallestUnit)).toString();
+  }
+
+  const baseUrl = !params.amount ? SEND_URL : BASE_URL;
+  const url = `${baseUrl}?${new URLSearchParams(params).toString()}`;
+
+  return url;
+}
+
+
+async function deleteMessage(ctx: Context, messageId: number) {
+  if ('chat' in ctx && ctx.chat && messageId) {
+    try {
+      const chatMember = await ctx.telegram.getChatMember(ctx.chat.id, ctx.botInfo.id);
+      const canDelete = ['administrator', 'creator'].includes(chatMember.status) &&
+        ('can_delete_messages' in chatMember ? chatMember.can_delete_messages : false);
+
+      // Only attempt to delete if we have permission
+      if (canDelete && 'message' in ctx && ctx.message && 'message_id' in ctx.message) {
+        try {
+          await ctx.deleteMessage(messageId);
+        } catch (deleteError: any) {
+          console.log(`Delete error details: ${JSON.stringify(deleteError)}`);
+          if (deleteError.response?.description.includes('message to delete not found')) {
+            console.log('Message already deleted or too old');
+          } else {
+            console.log(`Unexpected delete error: ${deleteError.message}`);
+          }
+        }
+      } else {
+        console.log('Bot lacks delete permissions in this chat');
+      }
+    } catch (permissionError: any) {
+      console.log(`Could not check permissions: ${permissionError.message}`);
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Help command
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+async function sendMessage(ctx: Context, text: string) {
+  try {
+    // Delete the original command message if possible
+    ctx.message && deleteMessage(ctx, ctx.message.message_id);
+
+    // Send the response as a self-destructing message
+    return await ctx.reply(text, {
+      parse_mode: 'Markdown',
+      disable_notification: true, // Silent notification
+    });
+
+  } catch (error) {
+    console.error('Error in sendMessage:', error);
+  }
+}
+
+const helpMessage = `
+SendBot only works if your sendtag is in your name
+*/send*
+• Reply with /send
+  • /send /vic
+  • /send /vic 100
+• Send a token
+  • /send /vic 10 USDC
+• Write a note
+  • /send /vic 100 > This is a note
+  • /send /vic 100
+    This is a note
+
+
+*/guess*
+• /guess - Random slots, 1000 SEND prize
+• /guess 2000 - Random slots, 2000 SEND prize
+• /guess 10 2000 - 10 slots, 2000 SEND prize
+• /kill - End your game
+`;
+
+// Handle /help command
+bot.command('help', async (ctx) => {
+  await sendMessage(ctx, helpMessage);
+});
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Send command
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+function textToQuotedMarkdown(note: string | undefined): string | undefined {
+  if (!note || note === '') return undefined;
+  return note
+    .split('\n')
+    .map(line => {
+      // Escape special characters for MarkdownV2
+      const escapedLine = line.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+      return `\\> ${escapedLine}`;  // Escape the > character
+    })
+    .join('\n');
+}
+
+function generateSendText(ctx: CommandContext, recipient: string, amount?: string, token?: TokenType, note?: string): string {
+
+  const sender = ctx.from.first_name
+  const repliedToUser = ctx.message.reply_to_message?.from;
+  const formattedNote = `📝 Note from ${sender}:\n${textToQuotedMarkdown(note)}`;
+
+  return amount ?
+    `${formattedNote}\n\n➡️ ${sender} is sending ${amount} ${token ?? 'SEND'
+    } to / ${recipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '') :
+    `${formattedNote}\n\n➡️ ${sender} is sending to /${recipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '');
+}
+
 
 function parseSendNote(text: string): { command: string, note?: string } {
   // Try newline first
@@ -179,120 +375,6 @@ function parseSendCommand(ctx: CommandContext): SendCommand | undefined {
 }
 
 
-function generateSendUrl(command: SendCommand): string {
-  const params: Record<string, string> = {
-    idType: 'tag',
-    recipient: command.recipient,
-  };
-
-  const tokenConfig = TOKEN_CONFIG[command.token ?? "SEND"];
-  if (tokenConfig.address) {
-    params.sendToken = tokenConfig.address;
-  }
-
-  let amount = parseFloat(command.amount?.replace(/,/g, '') ?? "");
-  if (!isNaN(amount) && amount > 0.) {
-    const amountInSmallestUnit = amount * Number(10n ** tokenConfig.decimals);
-    params.amount = BigInt(Math.round(amountInSmallestUnit)).toString();
-  }
-
-  const baseUrl = !params.amount ? SEND_URL : BASE_URL;
-  const url = `${baseUrl}?${new URLSearchParams(params).toString()}`;
-
-  return url;
-}
-
-function textToQuotedMarkdown(note: string | undefined): string | undefined {
-  if (!note || note === '') return undefined;
-  return note
-    .split('\n')
-    .map(line => `> ${line}`)
-    .join('\n');
-}
-
-function generateSendText(ctx: CommandContext, recipient: string, amount?: string, token?: TokenType, note?: string): string {
-  const markdownNote = textToQuotedMarkdown(note);
-  const sender = ctx.from.first_name
-  const repliedToUser = ctx.message.reply_to_message?.from;
-  return amount ?
-    `${markdownNote}\n\n➡️ ${sender} is sending ${amount} ${token ?? 'SEND'} to /${recipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '') :
-    `${markdownNote}\n\n➡️ ${sender} is sending to /${recipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '');
-}
-
-function generateGameButtonText(winner: Player, game: GameState): string {
-  return `➡️ [‎](tg://user?id=${game.masterId}) ${game.masterName} send ${game.amount} to ${winner.sendtag} [‎](tg://user?id=${winner.userId})`
-}
-
-async function deleteMessage(ctx: Context, messageId: number) {
-  if ('chat' in ctx && ctx.chat && messageId) {
-    try {
-      const chatMember = await ctx.telegram.getChatMember(ctx.chat.id, ctx.botInfo.id);
-      const canDelete = ['administrator', 'creator'].includes(chatMember.status) &&
-        ('can_delete_messages' in chatMember ? chatMember.can_delete_messages : false);
-
-      // Only attempt to delete if we have permission
-      if (canDelete && 'message' in ctx && ctx.message && 'message_id' in ctx.message) {
-        try {
-          await ctx.deleteMessage(messageId);
-        } catch (deleteError: any) {
-          console.log(`Delete error details: ${JSON.stringify(deleteError)}`);
-          if (deleteError.response?.description.includes('message to delete not found')) {
-            console.log('Message already deleted or too old');
-          } else {
-            console.log(`Unexpected delete error: ${deleteError.message}`);
-          }
-        }
-      } else {
-        console.log('Bot lacks delete permissions in this chat');
-      }
-    } catch (permissionError: any) {
-      console.log(`Could not check permissions: ${permissionError.message}`);
-    }
-  }
-}
-
-async function sendMessage(ctx: Context, text: string) {
-  try {
-    // Delete the original command message if possible
-    ctx.message && deleteMessage(ctx, ctx.message.message_id);
-
-    // Send the response as a self-destructing message
-    return await ctx.reply(text, {
-      parse_mode: 'Markdown',
-      disable_notification: true, // Silent notification
-    });
-
-  } catch (error) {
-    console.error('Error in sendMessage:', error);
-  }
-}
-
-const helpMessage = `
-SendBot only works if your sendtag is in your name
-*/send*
-• Reply with /send
-  • /send /vic
-  • /send /vic 100
-• Send a token
-  • /send /vic 10 USDC
-• Write a note
-  • /send /vic 100 > This is a note
-  • /send /vic 100
-    This is a note
-
-
-*/guess*
-• /guess - Random slots, 1000 SEND prize
-• /guess 2000 - Random slots, 2000 SEND prize
-• /guess 10 2000 - 10 slots, 2000 SEND prize
-• /kill - End your game
-`;
-
-// Handle /help command
-bot.command('help', async (ctx) => {
-  await sendMessage(ctx, helpMessage);
-});
-
 // Handle /send command
 bot.command('send', async (ctx: CommandContext) => {
   if (!ctx.chat) {
@@ -317,12 +399,11 @@ bot.command('send', async (ctx: CommandContext) => {
           { text: '/send', url }
         ]]
       },
-      parse_mode: 'Markdown',
+      parse_mode: 'MarkdownV2',
       reply_parameters: ctx.message.reply_to_message ? {
         message_id: ctx.message.reply_to_message.message_id,
         allow_sending_without_reply: true
       } : undefined,
-      disable_notification: true
     });
     queueMessageDeletion(ctx, ctx.message.message_id);
     return;
@@ -331,72 +412,10 @@ bot.command('send', async (ctx: CommandContext) => {
   queueMessageDeletion(ctx, ctx.message.message_id);
 });
 
-// Add at the top with other interfaces
-interface DeleteTask {
-  chatId: number;
-  messageId: number;
-}
 
-// Add with other global variables
-const deleteQueue: DeleteTask[] = [];
-let isProcessingQueue = false;
-
-// Add this new function to handle deletions
-async function queueMessageDeletion(ctx: Context | CommandContext, messageId: number) {
-  if (!ctx.chat) return;
-
-  try {
-    const isCommand = ctx?.message && ('entities' in ctx.message) && ctx.message.entities?.some(entity => entity.type === 'bot_command' && entity.offset === 0);
-    // Check if message is from an admin
-    if (ctx.from && !ctx.from.is_bot && !isCommand) {
-
-      const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
-      if (['administrator', 'creator'].includes(member.status)) {
-        return; // Don't delete admin messages
-      }
-    }
-
-    const task = {
-      chatId: ctx.chat.id,
-      messageId: messageId
-    };
-
-    // If it's our bot's message, prioritize it
-    if (ctx.from?.id === bot.botInfo?.id) {
-      deleteQueue.unshift(task);
-    } else {
-      deleteQueue.push(task);
-    }
-
-    if (!isProcessingQueue) {
-      processDeleteQueue();
-    }
-  }
-  catch (error) {
-    console.log('Error checking admin status:', error);
-  }
-}
-
-async function processDeleteQueue() {
-  isProcessingQueue = true;
-
-  while (deleteQueue.length > 0) {
-    const task = deleteQueue.shift();
-    if (!task) continue;
-
-    try {
-      await withRetry(async () => {
-        await bot.telegram.deleteMessage(task.chatId, task.messageId);
-      });
-      // Increase delay between deletions
-      await sleep(100); // 100ms between deletions
-    } catch (error) {
-      console.log('Error deleting message:', error);
-    }
-  }
-
-  isProcessingQueue = false;
-}
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Guess command
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 
@@ -463,6 +482,10 @@ interface GameState {
 
 // Track games by chat ID
 let activeGames: Map<number, GameState> = new Map();
+
+function generateGameButtonText(winner: Player, game: GameState): string {
+  return `➡️ [‎](tg://user?id=${game.masterId}) ${game.masterName} send ${game.amount} to ${winner.sendtag} [‎](tg://user?id=${winner.userId})`
+}
 
 bot.command('guess', async (ctx) => {
   try {
