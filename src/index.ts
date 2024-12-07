@@ -363,7 +363,8 @@ function parseSendCommand(ctx: CommandContext): SendCommand | undefined {
   // add back the /. Would be better to do this in recipient but might break stuff
   const senderTag = "/" + params.recipient
   const afterSendtag = content.slice(content.indexOf(senderTag) + senderTag.length);
-  const amountMatch = afterSendtag.match(patterns.amount);
+  const textToSearch = isReply ? content : afterSendtag;
+  const amountMatch = textToSearch.match(patterns.amount);
   if (amountMatch?.[1]) {
     const cleanAmount = amountMatch[1].replace(/,/g, '');
     params.amount = cleanAmount;
