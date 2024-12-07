@@ -290,15 +290,13 @@ function escapeMarkdownText(text: string | undefined): string | undefined {
 function generateSendText(ctx: CommandContext, recipient: string, amount?: string, token?: TokenType, note?: string): string {
   const markdownSender = escapeMarkdown(ctx.from.first_name);
   const markdownRecipient = escapeMarkdown(recipient);
+  const text = escapeMarkdownText(note);
   const repliedToUser = ctx.message.reply_to_message?.from;
-  const formattedNote = escapeMarkdownText(note) !== undefined ?
-    `\`\n\n║ 🟩 ${markdownSender}\n║ ━━━━━━━━━━\n║ ${escapeMarkdownText(note)?.split('\n').join('\n║ ')}\n║\`\n` : '';
-
   const formattedAmount = amount ? Number(amount).toLocaleString('en-US') : undefined;
-
-  return formattedAmount ?
-    `*${formattedAmount} ${token ?? 'SEND'}*\n${markdownSender} ➡️ /${markdownRecipient}` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id}) ${formattedNote}` : '') :
-    `${markdownSender} ➡️ /${markdownRecipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})${formattedNote}` : '');
+  return (formattedAmount ? `\`\n┃ \`` + `*${formattedAmount} ${token ?? 'SEND'}*\n` : "")
+    + (text ? `\`┃ ━━━━━━━━━━\n┃ ${text.split('\n').join('\n┃ ')}\n┃ \`` : "")
+    + `\`\n┃ \n┃ \`` + `${markdownSender} is sending to /${markdownRecipient}`
+    + (repliedToUser?.id ? `[‎](tg://user?id=${repliedToUser.id})` : '');
 }
 
 
@@ -495,7 +493,7 @@ interface GameState {
 let activeGames: Map<number, GameState> = new Map();
 
 function generateGameButtonText(winner: Player, game: GameState): string {
-  return `➡️ [‎](tg://user?id=${game.masterId}) ${game.masterName} send ${game.amount} to ${winner.sendtag} [‎](tg://user?id=${winner.userId})`
+  return `➡️ [‎](tg://user?id=${game.masterId}) ${game.masterName} send ${Number(game.amount).toLocaleString()} SEND to ${winner.sendtag} [‎](tg://user?id=${winner.userId})`
 }
 
 bot.command('guess', async (ctx) => {
