@@ -285,26 +285,32 @@ function escapeMarkdownText(text: string | undefined): string | undefined {
     .join('\n');
 }
 
-function splitIntoLines(text: string, wordsPerLine: number = 7): string {
-  return text
-    .split('\n')
-    .map(line => {
-      const words = line.split(' ');
-      const lines = [];
-      for (let i = 0; i < words.length; i += wordsPerLine) {
-        lines.push(words.slice(i, i + wordsPerLine).join(' '));
-      }
-      return lines.join('\n');
-    })
-    .join('\n');
-}
+function wrapText(text: string, maxWidth: number = 28): string {
+  // Split into words and keep line breaks
+  const words = text.split(' ');
+  const lines = [];
+  let currentLine = words[0];
 
+  for (let i = 1; i < words.length; i++) {
+    const word = words[i];
+    // Check if adding the next word (plus a space) would exceed maxWidth
+    if ((currentLine + ' ' + word).length <= maxWidth) {
+      currentLine += ' ' + word;  // Add to current line
+    } else {
+      lines.push(currentLine);    // Save current line
+      currentLine = word;         // Start new line with word
+    }
+  }
+  lines.push(currentLine);  // Don't forget the last line
+
+  return lines.join('\n');
+}
 
 function generateSendText(ctx: CommandContext, recipient: string, amount?: string, token?: TokenType, note?: string): string {
   const markdownSender = escapeMarkdown(ctx.from.first_name);
   const markdownRecipient = escapeMarkdown(recipient);
   const markdownNote = escapeMarkdownText(note);
-  const formattedNote = markdownNote ? splitIntoLines(markdownNote) : undefined;
+  const formattedNote = markdownNote ? wrapText(markdownNote) : undefined;
   const repliedToUser = ctx.message.reply_to_message?.from;
   const formattedAmount = amount ? Number(amount).toLocaleString('en-US') : undefined;
   return (formattedAmount ? `\`\n┃ \`` + `*${formattedAmount} ${token ?? 'SEND'} to /${markdownRecipient}*\n` : "")
