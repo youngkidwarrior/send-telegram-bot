@@ -338,7 +338,6 @@ function parseSendCommand(ctx: CommandContext): SendCommand | undefined {
 
   const params: SendCommand = {
     recipient: "",
-    note
   };
 
   if (isReply) {
@@ -369,6 +368,10 @@ function parseSendCommand(ctx: CommandContext): SendCommand | undefined {
   const tokenMatch = afterSendtag.match(patterns.token);
   if (tokenMatch?.[1]) {
     params.token = tokenMatch[1].toUpperCase() as TokenType;
+  }
+
+  if (note) {
+    params.note = note;
   }
 
   return params;
