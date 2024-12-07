@@ -285,15 +285,31 @@ function escapeMarkdownText(text: string | undefined): string | undefined {
     .join('\n');
 }
 
+function splitIntoLines(text: string, wordsPerLine: number = 7): string {
+  return text
+    .split('\n')
+    .map(line => {
+      const words = line.split(' ');
+      const lines = [];
+      for (let i = 0; i < words.length; i += wordsPerLine) {
+        lines.push(words.slice(i, i + wordsPerLine).join(' '));
+      }
+      return lines.join('\n');
+    })
+    .join('\n');
+}
+
+
 function generateSendText(ctx: CommandContext, recipient: string, amount?: string, token?: TokenType, note?: string): string {
   const markdownSender = escapeMarkdown(ctx.from.first_name);
   const markdownRecipient = escapeMarkdown(recipient);
-  const text = escapeMarkdownText(note);
+  const markdownNote = escapeMarkdownText(note);
+  const formattedNote = markdownNote ? splitIntoLines(markdownNote) : undefined;
   const repliedToUser = ctx.message.reply_to_message?.from;
   const formattedAmount = amount ? Number(amount).toLocaleString('en-US') : undefined;
-  return (formattedAmount ? `\`\n┃ \`` + `*${formattedAmount} ${token ?? 'SEND'}*\n` : "")
-    + (text ? `\`┃ ━━━━━━━━━━\n┃ ${text.split('\n').join('\n┃ ')}\n┃ \`` : "")
-    + `\`\n┃ \n┃ \`` + `${markdownSender} is sending to /${markdownRecipient}`
+  return (formattedAmount ? `\`\n┃ \`` + `*${formattedAmount} ${token ?? 'SEND'} to /${markdownRecipient}*\n` : "")
+    + (formattedNote ? `\`┃ ━━━━━━━━━━\n┃ ${formattedNote.split('\n').join('\n┃ ')}\n┃ \`` : "")
+    + `\`\n┃ \n┃ \`` + `from ${markdownSender}`
     + (repliedToUser?.id ? `[‎](tg://user?id=${repliedToUser.id})` : '');
 }
 
