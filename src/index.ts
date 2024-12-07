@@ -291,12 +291,14 @@ function generateSendText(ctx: CommandContext, recipient: string, amount?: strin
   const markdownSender = escapeMarkdown(ctx.from.first_name);
   const markdownRecipient = escapeMarkdown(recipient);
   const repliedToUser = ctx.message.reply_to_message?.from;
-  const formattedNote = note ? `_📝 Note from ${markdownSender}:_\n\n${escapeMarkdownText(note)}\n\n` : '';
+  const formattedNote = escapeMarkdownText(note) !== undefined ?
+    `\`\n\n║ 🟩 ${markdownSender}\n║ ━━━━━━━━━━\n║ ${escapeMarkdownText(note)?.split('\n').join('\n║ ')}\n║\`\n` : '';
 
-  return amount ?
-    `${formattedNote} ➡️ ${markdownSender} is sending ${amount} ${token ?? 'SEND'
-    } to /${markdownRecipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '') :
-    `${formattedNote} ➡️ ${markdownSender} is sending to /${markdownRecipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '');
+  const formattedAmount = amount ? Number(amount).toLocaleString('en-US') : undefined;
+
+  return formattedAmount ?
+    `*${formattedAmount} ${token ?? 'SEND'}*\n${markdownSender} ➡️ /${markdownRecipient}` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id}) ${formattedNote}` : '') :
+    `${markdownSender} ➡️ /${markdownRecipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})${formattedNote}` : '');
 }
 
 
