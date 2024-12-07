@@ -1,5 +1,6 @@
 import { Telegraf, Context } from 'telegraf';
 import dotenv from 'dotenv';
+import { Message, MessageEntity, Update } from 'telegraf/types';
 
 dotenv.config();
 
@@ -49,8 +50,17 @@ async function withRetry<T>(
 
   throw lastError;
 }
+
+interface CommandMessage extends Message.TextMessage {
+  text: string;
+  entities?: MessageEntity[];  // Command entities will always exist
+}
+
+type CommandContext = Context<Update.MessageUpdate<CommandMessage>>;
 // Initialize bot with your token
 const bot = new Telegraf(process.env.BOT_TOKEN ?? "");
+
+
 
 // Token configurations
 enum TokenType {
@@ -86,32 +96,77 @@ interface SendCommand {
   recipient: string;
   amount?: string;
   token?: TokenType;
+  note?: string;
 }
 
-function parseSendCommand(text: string): SendCommand | null {
+function parseSendNote(text: string): { command: string, note?: string } {
+  // Try newline first
+  const newlineIndex = text.indexOf('\n');
+  const carrotIndex = text.indexOf('>');
+  if (newlineIndex === -1 && carrotIndex === -1) {
+    return { command: text };
+  }
+  const splitIndex = (newlineIndex === -1) ? carrotIndex :
+    (carrotIndex === -1) ? newlineIndex :
+      Math.min(newlineIndex, carrotIndex);
+  return {
+    command: text.slice(0, splitIndex),
+    note: text.slice(splitIndex + 1).trim() || undefined
+  };
+}
+
+function parseSendCommand(ctx: CommandContext): SendCommand | undefined {
+  // Split command and note
+  const { command, note } = parseSendNote(ctx.message.text);
   // Remove /send and trim to parse the rest
-  const content = text.slice(5).trim();
+  const content = command.slice(5).trim();
 
   // Match patterns in specific order
   const patterns = {
     sendtag: /\/([a-zA-Z0-9_]+)/,      // Must start with /
-    amount: /(\d+(?:\.\d+)?)/,         // number format
+    amount: /(\d[\d,]*(?:\.\d+)?)/,    // number format supports commas and decimals
     token: /(SEND|USDC|ETH)(?:\s+|$)/i  // More lenient token match
   };
   const sendtagMatch = content.match(patterns.sendtag);
-  if (!sendtagMatch?.[1]) {
-    return null;
+  const isReply = ctx?.message?.reply_to_message;
+  if (!isReply && !sendtagMatch?.[1]) {
+    return;
+  }
+
+  const repliedToUser = ctx?.message?.reply_to_message?.from;
+  const isReplyToSelf = repliedToUser?.id === ctx.message.from.id;
+
+  if (isReplyToSelf) {
+    return;
   }
 
   const params: SendCommand = {
-    recipient: sendtagMatch[1],
+    recipient: "",
+    note
   };
 
-  // Extract amount - search after sendtag
-  const afterSendtag = content.slice(content.indexOf(sendtagMatch[0]) + sendtagMatch[0].length);
+  if (isReply) {
+    const parsedName = repliedToUser?.first_name?.split('/');
+    const hasSendtag = parsedName !== undefined && parsedName.length > 1
+    const cleanSendtag = hasSendtag && parsedName[1].split(/[\s\u{1F300}-\u{1F9FF}]/u)[0].replace(/[^a-zA-Z0-9_]/gu, '').trim();
+    if (!cleanSendtag || cleanSendtag === '') {
+      return;
+    }
+    params.recipient = cleanSendtag;
+  } else if (sendtagMatch?.[1]) {
+    params.recipient = sendtagMatch[1];
+  }
+
+  if (params.recipient === "") {
+    return;
+  }
+  // add back the /. Would be better to do this in recipient but might break stuff
+  const senderTag = "/" + params.recipient
+  const afterSendtag = content.slice(content.indexOf(senderTag) + senderTag.length);
   const amountMatch = afterSendtag.match(patterns.amount);
   if (amountMatch?.[1]) {
-    params.amount = amountMatch[1];
+    const cleanAmount = amountMatch[1].replace(/,/g, '');
+    params.amount = cleanAmount;
   }
 
   // Extract token - search after amount if exists
@@ -147,11 +202,21 @@ function generateSendUrl(command: SendCommand): string {
   return url;
 }
 
-// Modify the button text generation
-function generateButtonText(sender: string, recipient: string, amount?: string, token?: TokenType): string {
+function textToQuotedMarkdown(note: string | undefined): string | undefined {
+  if (!note || note === '') return undefined;
+  return note
+    .split('\n')
+    .map(line => `> ${line}`)
+    .join('\n');
+}
+
+function generateSendText(ctx: CommandContext, recipient: string, amount?: string, token?: TokenType, note?: string): string {
+  const markdownNote = textToQuotedMarkdown(note);
+  const sender = ctx.from.first_name
+  const repliedToUser = ctx.message.reply_to_message?.from;
   return amount ?
-    `➡️ ${sender} is sending ${amount} ${token ?? 'SEND'} to /${recipient}` :
-    `➡️ ${sender} is sending to /${recipient}`;
+    `${markdownNote}\n\n➡️ ${sender} is sending ${amount} ${token ?? 'SEND'} to /${recipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '') :
+    `${markdownNote}\n\n➡️ ${sender} is sending to /${recipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '');
 }
 
 function generateGameButtonText(winner: Player, game: GameState): string {
@@ -203,12 +268,22 @@ async function sendMessage(ctx: Context, text: string) {
 }
 
 const helpMessage = `
+SendBot only works if your sendtag is in your name
 */send*
-• Reply with /send to get send link
-• /send /vic 100 SEND
+• Reply with /send
+  • /send /vic
+  • /send /vic 100
+• Send a token
+  • /send /vic 10 USDC
+• Write a note
+  • /send /vic 100 > This is a note
+  • /send /vic 100
+    This is a note
+
 
 */guess*
 • /guess - Random slots, 1000 SEND prize
+• /guess 2000 - Random slots, 2000 SEND prize
 • /guess 10 2000 - 10 slots, 2000 SEND prize
 • /kill - End your game
 `;
@@ -219,15 +294,22 @@ bot.command('help', async (ctx) => {
 });
 
 // Handle /send command
-bot.command('send', async (ctx) => {
+bot.command('send', async (ctx: CommandContext) => {
   if (!ctx.chat) {
     queueMessageDeletion(ctx, ctx.message.message_id);
     return;
   }
-  const parsedCommand = parseSendCommand(ctx.message.text);
+
+  const parsedCommand = parseSendCommand(ctx);
   if (parsedCommand) {
     const url = generateSendUrl(parsedCommand);
-    const text = generateButtonText(ctx.from.first_name, parsedCommand.recipient, parsedCommand.amount, parsedCommand.token);
+    const text = generateSendText(
+      ctx,
+      parsedCommand.recipient,
+      parsedCommand.amount,
+      parsedCommand.token,
+      parsedCommand.note
+    );
 
     await ctx.reply(text, {
       reply_markup: {
@@ -235,76 +317,18 @@ bot.command('send', async (ctx) => {
           { text: '/send', url }
         ]]
       },
+      parse_mode: 'Markdown',
+      reply_parameters: ctx.message.reply_to_message ? {
+        message_id: ctx.message.reply_to_message.message_id,
+        allow_sending_without_reply: true
+      } : undefined,
       disable_notification: true
     });
     queueMessageDeletion(ctx, ctx.message.message_id);
     return;
   }
 
-  if (ctx.message.reply_to_message) {
-    const repliedToUser = ctx.message.reply_to_message.from;
-    const isReplyToSelf = repliedToUser?.id === ctx.message.from.id;
-
-    if (repliedToUser && !isReplyToSelf) {
-      const parsedName = repliedToUser.first_name?.split('/');
-      const hasSendtag = parsedName !== undefined && parsedName.length > 1
-      const cleanSendtag = hasSendtag && parsedName[1].split(/[\s\u{1F300}-\u{1F9FF}]/u)[0].replace(/[^a-zA-Z0-9_]/gu, '').trim();
-
-
-      if (hasSendtag && cleanSendtag) {
-        // Check if there's any content after /send
-        const content = ctx.message.text.slice(5).trim();
-
-        // If no content, just do a quick send
-        if (!content) {
-          const command: SendCommand = { recipient: cleanSendtag };
-          const url = generateSendUrl(command);
-          const text = generateButtonText(ctx.from.first_name, cleanSendtag);
-
-          await ctx.reply(text, {
-            reply_markup: {
-              inline_keyboard: [[
-                { text: '/send', url }
-              ]]
-            },
-            reply_parameters: { message_id: ctx.message.reply_to_message.message_id, allow_sending_without_reply: true },
-            disable_notification: true,
-          });
-          queueMessageDeletion(ctx, ctx.message.message_id);
-          return;
-        }
-
-        // Otherwise parse amount/token
-        const cleanContent = content.replace(/,/g, '');
-        const amountMatch = cleanContent.match(/(\d+(?:\.\d+)?)/);
-        const tokenMatch = cleanContent.match(/(SEND|USDC|ETH)(?:\s+|$)/i);
-
-        const command: SendCommand = {
-          recipient: cleanSendtag,
-          amount: amountMatch?.[1],
-          token: (tokenMatch?.[1]?.toUpperCase() ?? 'SEND') as TokenType
-        };
-
-        const url = generateSendUrl(command);
-        const text = generateButtonText(ctx.from.first_name, command.recipient, command.amount, command.token);
-
-        await ctx.reply(text, {
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '/send', url }
-            ]]
-          },
-          reply_parameters: { message_id: ctx.message.reply_to_message.message_id, allow_sending_without_reply: true },
-          disable_notification: true,
-        });
-        queueMessageDeletion(ctx, ctx.message.message_id);
-        return;
-      }
-    }
-  }
-
   queueMessageDeletion(ctx, ctx.message.message_id);
-
 });
 
 // Add at the top with other interfaces
@@ -318,11 +342,11 @@ const deleteQueue: DeleteTask[] = [];
 let isProcessingQueue = false;
 
 // Add this new function to handle deletions
-async function queueMessageDeletion(ctx: Context, messageId: number) {
+async function queueMessageDeletion(ctx: Context | CommandContext, messageId: number) {
   if (!ctx.chat) return;
 
   try {
-    const isCommand = ctx?.message && ('entities' in ctx.message) && ctx.message.entities?.some(entity => entity.type === 'bot_command');
+    const isCommand = ctx?.message && ('entities' in ctx.message) && ctx.message.entities?.some(entity => entity.type === 'bot_command' && entity.offset === 0);
     // Check if message is from an admin
     if (ctx.from && !ctx.from.is_bot && !isCommand) {
 
