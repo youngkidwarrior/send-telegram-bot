@@ -269,6 +269,10 @@ bot.command('help', async (ctx) => {
 // Send command
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+function escapeMarkdown(text: string): string {
+  return text.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+}
+
 
 function textToQuotedMarkdown(note: string | undefined): string | undefined {
   if (!note || note === '') return undefined;
@@ -276,22 +280,23 @@ function textToQuotedMarkdown(note: string | undefined): string | undefined {
     .split('\n')
     .map(line => {
       // Escape special characters for MarkdownV2
-      const escapedLine = line.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
-      return `\\> ${escapedLine}`;  // Escape the > character
+      const escapedLine = line.replace(/([_*[\]()~`#+\-=|{}.!\\])/g, '\\$1')
+      return `     >${escapedLine}`;
     })
     .join('\n');
 }
 
 function generateSendText(ctx: CommandContext, recipient: string, amount?: string, token?: TokenType, note?: string): string {
 
-  const sender = ctx.from.first_name
+  const markdownSender = ctx.from.first_name
+  const markdownRecipient = escapeMarkdown(recipient);
   const repliedToUser = ctx.message.reply_to_message?.from;
-  const formattedNote = `📝 Note from ${sender}:\n${textToQuotedMarkdown(note)}`;
+  const formattedNote = note ? `📝 Note from ${markdownSender}:\n\n${textToQuotedMarkdown(note)}` : '';
 
   return amount ?
-    `${formattedNote}\n\n➡️ ${sender} is sending ${amount} ${token ?? 'SEND'
-    } to / ${recipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '') :
-    `${formattedNote}\n\n➡️ ${sender} is sending to /${recipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '');
+    `${formattedNote}\n\n➡️ ${markdownSender} is sending ${amount} ${token ?? 'SEND'
+    } to / ${markdownRecipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '') :
+    `${formattedNote}\n\n➡️ ${markdownSender} is sending to /${markdownRecipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '');
 }
 
 
