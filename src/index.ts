@@ -322,8 +322,10 @@ async function queueMessageDeletion(ctx: Context, messageId: number) {
   if (!ctx.chat) return;
 
   try {
+    const isCommand = ctx?.message && ('entities' in ctx.message) && ctx.message.entities?.some(entity => entity.type === 'bot_command');
     // Check if message is from an admin
-    if (ctx.from) {
+    if (ctx.from && !ctx.from.is_bot && !isCommand) {
+
       const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
       if (['administrator', 'creator'].includes(member.status)) {
         return; // Don't delete admin messages
