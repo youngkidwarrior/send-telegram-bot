@@ -243,15 +243,13 @@ async function sendMessage(ctx: Context, text: string) {
 const helpMessage = `
 SendBot only works if your sendtag is in your name
 */send*
-• Reply with /send
-  • /send /vic
-  • /send /vic 100
-• Send a token
-  • /send /vic 10 USDC
-• Write a note
-  • /send /vic 100 > This is a note
-  • /send /vic 100
-    This is a note
+  \`/send /vic 1000 SEND\`
+
+__*/send a note*__
+  \`/send /vic 1000 > Hello!\`
+
+__*/send a reply*__
+   \`/send 1000 > Hello!\
 
 
 */guess*
