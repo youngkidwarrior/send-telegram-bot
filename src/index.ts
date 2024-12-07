@@ -275,29 +275,28 @@ function escapeMarkdown(text: string): string {
 }
 
 
-function textToQuotedMarkdown(note: string | undefined): string | undefined {
-  if (!note || note === '') return undefined;
-  return note
+function escapeMarkdownText(text: string | undefined): string | undefined {
+  if (!text || text === '') return undefined;
+  return text
     .split('\n')
     .map(line => {
       // Escape special characters for MarkdownV2
       const escapedLine = line.replace(/[_*[\]()~`#+\-=|{}.!]/g, '\\$&');
-      return `>${escapedLine}`;
+      return `${escapedLine}`;
     })
     .join('\n');
 }
 
 function generateSendText(ctx: CommandContext, recipient: string, amount?: string, token?: TokenType, note?: string): string {
-
   const markdownSender = escapeMarkdown(ctx.from.first_name);
   const markdownRecipient = escapeMarkdown(recipient);
   const repliedToUser = ctx.message.reply_to_message?.from;
-  const formattedNote = note ? `📝 Note from ${markdownSender}:\n\n${textToQuotedMarkdown(note)}` : '';
+  const formattedNote = note ? `_📝 Note from ${markdownSender}:_\n\n${escapeMarkdownText(note)}\n\n` : '';
 
   return amount ?
-    `${formattedNote}\n\n➡️ ${markdownSender} is sending ${amount} ${token ?? 'SEND'
+    `${formattedNote} ➡️ ${markdownSender} is sending ${amount} ${token ?? 'SEND'
     } to /${markdownRecipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '') :
-    `${formattedNote}\n\n➡️ ${markdownSender} is sending to /${markdownRecipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '');
+    `${formattedNote} ➡️ ${markdownSender} is sending to /${markdownRecipient} ` + (repliedToUser ? `[‎](tg://user?id=${repliedToUser.id})` : '');
 }
 
 
