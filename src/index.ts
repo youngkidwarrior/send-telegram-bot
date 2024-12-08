@@ -314,10 +314,16 @@ function generateSendText(ctx: CommandContext, recipient: string, amount?: strin
   const repliedToUser = ctx.message.reply_to_message?.from;
   const formattedAmount = amount ? Number(amount).toLocaleString('en-US') : undefined;
   const rightPadding = ' '.repeat(Math.max(28 - markdownSender.length - 8, 0)); // 8 for "sent by "
-  return (formattedAmount ? `\`\n┃ \`` + `*${formattedAmount} ${token ?? 'SEND'} to /${markdownRecipient}*` : "")
-    + (formattedNote ? `\`\n┃ ━━━━━━━━━━\n┃ ${formattedNote.split('\n').join('\n┃ ')}\n┃ \`` : "")
-    + `\`\n┃ \`` + `${rightPadding}_sent by ${markdownSender}_`
-    + (repliedToUser?.id ? `[‎](tg://user?id=${repliedToUser.id})` : '');
+  const headerText = `\`\n┃ \`` + (formattedAmount ? `*${formattedAmount} ${token ?? 'SEND'} to /${markdownRecipient}*` : `*${markdownSender} sending to /${markdownRecipient}*`);
+  const noteText = formattedNote ?
+    `\`\n┃\` \`━━━━━━━━━━\n┃\` ${formattedNote.split('\n').join('\n┃ ')}\`\n┃\`` : "";
+  const senderText = formattedAmount ?
+    `\`\n┃\` ${rightPadding}\`sent by ${markdownSender}\`` : "";
+  const replyText = repliedToUser?.id ?
+    `[‎](tg://user?id=${repliedToUser.id})` : '';
+
+
+  return headerText + noteText + senderText + replyText;
 }
 
 
