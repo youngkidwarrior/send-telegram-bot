@@ -666,9 +666,14 @@ bot.action('join_game', async (ctx) => {
         const players = Array.from(pendingPlayers.get(chatId) || []);
         pendingPlayers.delete(chatId);
 
-        // Take first N players
+        // Deduplicate players based on userId
+        const uniquePlayers = players.filter((player, index, self) =>
+          index === self.findIndex(p => p.userId === player.userId)
+        );
+
+        // Take first N unique players
         const availableSlots = game.maxNumber - game.players.length;
-        const newPlayers = players.slice(0, availableSlots);
+        const newPlayers = uniquePlayers.slice(0, availableSlots);
         game.players.push(...newPlayers);
 
         // Notify players of their position or if they missed out
@@ -754,8 +759,10 @@ bot.action('join_game', async (ctx) => {
       }
     }, COLLECTION_WINDOW);
   }
+  const isPending = Array.from(pendingPlayers.get(chatId) || []).some(p => p.userId === ctx.from.id);
+
   // Add player to pending set
-  if (!game.players.some(p => p.userId === ctx.from.id)) {
+  if (!game.players.some(p => p.userId === ctx.from.id) && !isPending) {
     pendingPlayers.get(chatId)?.add({
       sendtag: `/${cleanSendtag}`,
       userId: ctx.from.id,
