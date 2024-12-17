@@ -841,19 +841,36 @@ bot.command('kill', async (ctx) => {
   if (!ctx.chat) return;
   const chatId = ctx.chat.id;
   let game = activeGames.get(chatId);
-  if (game && ctx.from?.id === game.masterId) {
+
+  if (!game) {
+    await ctx.reply('No active game to kill');
+    queueMessageDeletion(ctx, ctx.message.message_id);
+    return;
+  }
+
+  // Check if user is admin or game master
+  try {
+    const member = await ctx.telegram.getChatMember(chatId, ctx.from.id);
+    const isAdmin = ['administrator', 'creator'].includes(member.status);
+    const isGameMaster = ctx.from?.id === game.masterId;
+
+    if (!isAdmin && !isGameMaster) {
+      queueMessageDeletion(ctx, ctx.message.message_id);
+      return;
+    }
+
     game.active = false;
     activeGames.delete(chatId);
-    await ctx.telegram.editMessageText(
-      chatId,
-      game.messageId,
-      undefined,
-      `🎲 Game killed by game master.`
-    );
+
+    // Delete old game message
+    queueMessageDeletion(ctx, game.messageId);
     queueMessageDeletion(ctx, ctx.message.message_id);
-    return
+  } catch (error) {
+    console.log('Error checking admin status:', error);
+    queueMessageDeletion(ctx, ctx.message.message_id);
   }
-})
+});
+
 
 
 // Handle errors
