@@ -108,10 +108,9 @@ async function queueMessageDeletion(ctx: Context | CommandContext, messageId: nu
   if (!ctx.chat) return;
 
   try {
-    const isCommand = ctx?.message && ('entities' in ctx.message) && ctx.message.entities?.some(entity => entity.type === 'bot_command' && entity.offset === 0);
+    const isCommand = ctx.message && 'text' in ctx.message ? ctx.message.text?.trim().startsWith('/') : false;
     // Check if message is from an admin
     if (ctx.from && !ctx.from.is_bot && !isCommand) {
-
       const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
       if (['administrator', 'creator'].includes(member.status)) {
         return; // Don't delete admin messages
@@ -541,11 +540,12 @@ bot.command('guess', async (ctx) => {
     // Check if there's already an active game in this chat
     if (game) {
       const playerSendtags = game.players.map(player => player.sendtag).join(', ');
+      const formattedAmount = Number(game.amount).toLocaleString('en-US');
       const message = await ctx.reply(
         `🎲 The game is on!\n` +
         `First ${game.maxNumber} players\n\n` +
         `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
-        `${game.masterName} is sending it.\n`, {
+        `${game.masterName} is sending ${formattedAmount} SEND\n`, {
         reply_markup: {
           inline_keyboard: [[
             { text: '/join', callback_data: 'join_game' }
@@ -587,13 +587,14 @@ bot.command('guess', async (ctx) => {
 
     // Generate random number between 1 and maxNumber
     const winningNumber = Math.floor(Math.random() * maxNumber) + 1;
+    const formattedAmount = Number(amount).toLocaleString('en-US');
 
     // Send initial message and store its ID
     const message = await ctx.reply(
       `🎲 New game started!\n` +
       `First ${maxNumber} players\n\n` +
       `Players: _ \n\n` +
-      `${ctx.from?.first_name} is sending ${amount} SEND\n`, {
+      `${ctx.from?.first_name} is sending ${formattedAmount} SEND\n`, {
       reply_markup: {
         inline_keyboard: [[
           { text: '/join', callback_data: 'join_game' }
@@ -694,10 +695,11 @@ bot.action('join_game', async (ctx) => {
         // Update game message
         if (game.players.length < game.maxNumber) {
           const playerSendtags = game.players.map(player => player.sendtag).join(', ');
+          const formattedAmount = Number(game.amount).toLocaleString('en-US');
           const messageText = `🎲 The game is on!\n` +
             `First ${game.maxNumber} players\n\n` +
             `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
-            `${game.masterName} is sending ${game.amount} SEND.\n`;
+            `${game.masterName} is sending ${formattedAmount} SEND.\n`;
 
           const messageOptions = {
             reply_markup: {
@@ -707,15 +709,22 @@ bot.action('join_game', async (ctx) => {
             }
           };
           // Update message with retry
-          await withRetry(async () => {
-            await ctx.telegram.editMessageText(
-              chatId,
-              game.messageId,
-              undefined,
-              messageText,
-              messageOptions
-            );
-          });
+          if (game.active) {
+            try {
+              await withRetry(async () => {
+                await ctx.telegram.editMessageText(
+                  chatId,
+                  game.messageId,
+                  undefined,
+                  messageText,
+                  messageOptions
+                );
+              });
+            } catch (error) {
+              // Log but don't throw - game might have completed
+              console.log('Edit failed, game may have completed:', error);
+            }
+          }
         }
         // Process winner if game is full
         if (game.players.length >= game.maxNumber) {
@@ -864,7 +873,6 @@ bot.command('kill', async (ctx) => {
 
     // Delete old game message
     queueMessageDeletion(ctx, game.messageId);
-    queueMessageDeletion(ctx, ctx.message.message_id);
   } catch (error) {
     console.log('Error checking admin status:', error);
     queueMessageDeletion(ctx, ctx.message.message_id);
