@@ -1,6 +1,6 @@
 import { Telegraf, Context } from 'telegraf';
 import dotenv from 'dotenv';
-import { Message, MessageEntity, Update } from 'telegraf/types';
+import { Message, MessageEntity, Update, User } from 'telegraf/types';
 
 dotenv.config();
 
@@ -60,8 +60,6 @@ type CommandContext = Context<Update.MessageUpdate<CommandMessage>>;
 // Initialize bot with your token
 const bot = new Telegraf(process.env.BOT_TOKEN ?? "");
 
-
-
 // Token configurations
 enum TokenType {
   SEND = 'SEND',
@@ -93,6 +91,66 @@ const SEND_URL = 'https://send.app/send';
 const BASE_URL = 'https://send.app/send/confirm';
 const SEND_MAIN_CHAT_ID = -1001976492624
 
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Admin Cacheing
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Cache storage
+const adminCache = new Map<number, {
+  ids: number[],
+  timestamp: number
+}>();
+
+const CACHE_TIMEOUT = 60 * 60 * 1000; // 1 hour in ms
+
+// Function to get admin IDs with caching
+async function getAdminIds(ctx: Context | CommandContext, chatId: number): Promise<number[]> {
+  const now = Date.now();
+  const cached = adminCache.get(chatId);
+
+  // Return cached value if still valid
+  if (cached && now - cached.timestamp < CACHE_TIMEOUT) {
+    return cached.ids;
+  }
+
+  // Fetch new admin list
+  // This includes both admins and creator
+  try {
+
+    const admins = await ctx.telegram.getChatAdministrators(chatId);
+    const adminIds = admins.map(admin => admin.user.id);
+
+    // Update cache
+    adminCache.set(chatId, {
+      ids: adminIds,
+      timestamp: now
+    });
+
+    return adminIds;
+  } catch (error) {
+    console.error('Error getting admins:', error);
+    return cached?.ids || []; // Return cached ids if available, empty array if not
+  }
+}
+
+function cleanupAdminCache() {
+  const now = Date.now();
+  for (const [chatId, data] of adminCache.entries()) {
+    if (now - data.timestamp > CACHE_TIMEOUT) {
+      adminCache.delete(chatId);
+    }
+  }
+}
+
+// Run cleanup every hour
+setInterval(cleanupAdminCache, CACHE_TIMEOUT);
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Message Deletion
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // Add at the top with other interfaces
 interface DeleteTask {
   chatId: number;
@@ -106,22 +164,21 @@ let isProcessingQueue = false;
 // Add this new function to handle deletions
 async function queueMessageDeletion(ctx: Context | CommandContext, messageId: number) {
   if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
 
-  const isBotMessage = ctx.from?.id === bot.botInfo?.id;
+  const isBotMessage = ctx.message?.from?.id === bot.botInfo?.id;
   try {
     const isCommand = ctx.message && 'text' in ctx.message ? ctx.message.text?.trim().startsWith('/') : false;
     // Check if message is from an admin
-    if (ctx.from && !isBotMessage && !isCommand) {
-      const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
-      if (['administrator', 'creator'].includes(member.status)) {
+    if (ctx.message && !isBotMessage && !isCommand) {
+      const adminIds = await getAdminIds(ctx, chatId);
+      const isAdmin = adminIds.includes(ctx.message.from.id);
+      if (isAdmin) {
         return; // Don't delete admin messages
       }
     }
 
-    const task = {
-      chatId: ctx.chat.id,
-      messageId: messageId
-    };
+    const task = { chatId, messageId };
 
     // If it's our bot's message, prioritize it
     if (isBotMessage) {
@@ -471,8 +528,6 @@ bot.command('send', async (ctx: CommandContext) => {
 // Guess command
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
 // Add with other global variables
 const chatCooldowns: Map<number, {
   active: boolean,
@@ -524,21 +579,19 @@ interface Player {
 // Replace the current game tracking with channel-specific tracking
 interface GameState {
   winningNumber: number;
-  active: boolean;
   players: Player[];
   chatId: number;
   messageId: number;
   maxNumber: number;
   amount: string;
-  masterId: number;
-  masterName: string;
+  master: User
 }
 
 // Track games by chat ID
 let activeGames: Map<number, GameState> = new Map();
 
 function generateGameButtonText(winner: Player, game: GameState): string {
-  return `➡️ [‎](tg://user?id=${game.masterId}) ${game.masterName} send ${Number(game.amount).toLocaleString()} SEND to ${winner.sendtag} [‎](tg://user?id=${winner.userId})`
+  return `➡️ [‎](tg://user?id=${game.master.id}) ${game.master.first_name} send ${Number(game.amount).toLocaleString()} SEND to ${winner.sendtag} [‎](tg://user?id=${winner.userId})`
 }
 
 bot.command('guess', async (ctx) => {
@@ -549,13 +602,14 @@ bot.command('guess', async (ctx) => {
       return;
     }
     const chatId = ctx.chat.id;
-    let game = activeGames.get(chatId);
+
     let cooldown = chatCooldowns.get(chatId);
     if (cooldown?.active) {
       cooldown.messageId && queueMessageDeletion(ctx, cooldown.messageId);
       cooldown.active = false;
     }
 
+    let game = activeGames.get(chatId);
     // Check if there's already an active game in this chat
     if (game) {
       const playerSendtags = game.players.map(player => player.sendtag).join(', ');
@@ -564,7 +618,7 @@ bot.command('guess', async (ctx) => {
         `🎲 The game is on!\n` +
         `First ${game.maxNumber} players\n\n` +
         `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
-        `${game.masterName} is sending ${formattedAmount} SEND\n`, {
+        `${game.master.first_name} is sending ${formattedAmount} SEND\n`, {
         reply_markup: {
           inline_keyboard: [[
             { text: '/join', callback_data: 'join_game' }
@@ -625,14 +679,12 @@ bot.command('guess', async (ctx) => {
     // Create new game state for this chat
     activeGames.set(chatId, {
       winningNumber,
-      active: true,
       players: [],
       chatId,
       messageId: message.message_id,
       maxNumber,
       amount,
-      masterId: ctx.from?.id,
-      masterName: ctx.from?.first_name
+      master: ctx.from
     });
 
     // Delete the command message
@@ -662,7 +714,7 @@ bot.action('join_game', async (ctx) => {
   const chatId = ctx.chat.id;
   const game = activeGames.get(chatId);
 
-  if (!game?.active) {
+  if (!game) {
     await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'No active game!');
     return;
 
@@ -718,7 +770,7 @@ bot.action('join_game', async (ctx) => {
           const messageText = `🎲 The game is on!\n` +
             `First ${game.maxNumber} players\n\n` +
             `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
-            `${game.masterName} is sending ${formattedAmount} SEND.\n`;
+            `${game.master.first_name} is sending ${formattedAmount} SEND.\n`;
 
           const messageOptions = {
             reply_markup: {
@@ -728,7 +780,7 @@ bot.action('join_game', async (ctx) => {
             }
           };
           // Update message with retry
-          if (game.active) {
+          if (game) {
             try {
               await withRetry(async () => {
                 await ctx.telegram.editMessageText(
@@ -748,8 +800,8 @@ bot.action('join_game', async (ctx) => {
         // Process winner if game is full
         if (game.players.length >= game.maxNumber) {
           const deletedGame = activeGames.get(chatId);
-          activeGames.delete(chatId);
-          if (deletedGame?.active) {
+          const isDeleted = activeGames.delete(chatId);
+          if (isDeleted) {
             const winner = game.players[game.winningNumber - 1];
             const winningRecipient = winner.sendtag.split('/')[1];
 
@@ -763,6 +815,9 @@ bot.action('join_game', async (ctx) => {
             const text = generateGameButtonText(winner, game);
 
             await withRetry(async () => {
+              if (!isDeleted) {
+                return;
+              }
 
               // Delete game message
               await queueMessageDeletion(ctx, game.messageId);
@@ -806,11 +861,66 @@ bot.action('join_game', async (ctx) => {
   }
 });
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Kill command
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+bot.command('kill', async (ctx: CommandContext) => {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  let game = activeGames.get(chatId);
+
+  if (!game) {
+    // No game to kill - just delete command and return
+    queueMessageDeletion(ctx, ctx.message.message_id);
+    return;
+  }
+
+  // Check if user is admin or game master
+  try {
+    const isGameMaster = ctx.message.from.id === game.master.id;
+    const adminIds = await getAdminIds(ctx, chatId);
+    const isAdmin = adminIds.includes(ctx.message.from.id);
+
+    if (!isAdmin && !isGameMaster) {
+      queueMessageDeletion(ctx, ctx.message.message_id);
+      return;
+    }
+    const isDeleted = activeGames.delete(chatId);
+
+    // First edit the message to show game is killed
+    if (isDeleted && game.messageId) {
+      try {
+        await withRetry(async () => {
+          await ctx.telegram.editMessageText(
+            chatId,
+            game.messageId,
+            undefined,
+            `🎲 Game killed by ${isAdmin ? "Admin" : ctx.from?.first_name}`,
+          );
+        });
+      } catch (error) {
+        // Ignore edit errors - message might be gone
+        console.log('Failed to edit game message:', error);
+      }
+    }
+
+    queueMessageDeletion(ctx, ctx.message.message_id)
 
 
+  } catch (error) {
+    console.log('Error in kill command:', error);
+    queueMessageDeletion(ctx, ctx.message.message_id);
+  }
+});
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Spam Management
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 bot.on('message', async (ctx) => {
-  if (!ctx.chat || !('text' in ctx.message)) return;
+  if (!ctx.chat || !('text' in ctx.message) || ctx.from?.is_bot) return;
   const chatId = ctx.chat.id;
   const text = ctx.message.text;
 
@@ -835,8 +945,6 @@ bot.on('message', async (ctx) => {
 
   const cooldown = chatCooldowns.get(chatId);
 
-
-
   // Handle cooldown period
   if (cooldown?.active && sendtagMatches) {
     queueMessageDeletion(ctx, ctx.message.message_id);
@@ -858,68 +966,19 @@ bot.on('message', async (ctx) => {
     return;
   }
   const game = activeGames.get(chatId);
-  if (game?.active && sendtagMatches) {
+  if (Boolean(game) && sendtagMatches) {
     // If game is active, delete messages with sendtags that aren't in URLs
     queueMessageDeletion(ctx, ctx.message.message_id);
     return;
   }
 });
 
-bot.command('kill', async (ctx) => {
-  if (!ctx.chat) return;
-  const chatId = ctx.chat.id;
-  let game = activeGames.get(chatId);
-
-  if (!game) {
-    // No game to kill - just delete command and return
-    queueMessageDeletion(ctx, ctx.message.message_id);
-    return;
-  }
-
-  // Check if user is admin or game master
-  try {
-    const member = await ctx.telegram.getChatMember(chatId, ctx.from.id);
-    const isAdmin = ['administrator', 'creator'].includes(member.status);
-    const isGameMaster = ctx.from?.id === game.masterId;
-
-    if (!isAdmin && !isGameMaster) {
-      queueMessageDeletion(ctx, ctx.message.message_id);
-      return;
-    }
-
-    // First edit the message to show game is killed
-    if (game.active && game.messageId) {
-      try {
-        await withRetry(async () => {
-          await ctx.telegram.editMessageText(
-            chatId,
-            game.messageId,
-            undefined,
-            `🎲 Game killed by ${isAdmin ? "Admin" : ctx.from?.first_name}`,
-          );
-        });
-      } catch (error) {
-        // Ignore edit errors - message might be gone
-        console.log('Failed to edit game message:', error);
-      }
-    }
-
-    // Mark game as inactive before deletion
-    game.active = false;
-    activeGames.delete(chatId);
-
-    queueMessageDeletion(ctx, ctx.message.message_id)
 
 
-  } catch (error) {
-    console.log('Error in kill command:', error);
-    queueMessageDeletion(ctx, ctx.message.message_id);
-  }
-});
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Bot Upstart
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
-// Handle errors
 bot.catch((err: unknown) => {
   console.error('Bot error:', err);
 });
