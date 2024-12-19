@@ -107,10 +107,11 @@ let isProcessingQueue = false;
 async function queueMessageDeletion(ctx: Context | CommandContext, messageId: number) {
   if (!ctx.chat) return;
 
+  const isBotMessage = ctx.from?.id === bot.botInfo?.id;
   try {
     const isCommand = ctx.message && 'text' in ctx.message ? ctx.message.text?.trim().startsWith('/') : false;
     // Check if message is from an admin
-    if (ctx.from && !ctx.from.is_bot && !isCommand) {
+    if (ctx.from && !isBotMessage && !isCommand) {
       const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
       if (['administrator', 'creator'].includes(member.status)) {
         return; // Don't delete admin messages
@@ -123,7 +124,7 @@ async function queueMessageDeletion(ctx: Context | CommandContext, messageId: nu
     };
 
     // If it's our bot's message, prioritize it
-    if (ctx.from?.id === bot.botInfo?.id) {
+    if (isBotMessage) {
       deleteQueue.unshift(task);
     } else {
       deleteQueue.push(task);
@@ -142,22 +143,40 @@ async function processDeleteQueue() {
   isProcessingQueue = true;
 
   while (deleteQueue.length > 0) {
-    const task = deleteQueue.shift();
-    if (!task) continue;
+    // Process in batches of 10
+    const batch = deleteQueue.splice(0, 10);
 
     try {
       await withRetry(async () => {
-        await bot.telegram.deleteMessage(task.chatId, task.messageId);
+        await bot.telegram.deleteMessages(
+          batch[0].chatId,
+          batch.map(task => task.messageId)
+        );
       });
-      // Increase delay between deletions
-      await sleep(100); // 100ms between deletions
-    } catch (error) {
-      console.log('Error deleting message:', error);
+      await sleep(100); // Small delay between batches
+    } catch (error: any) {
+      // If batch delete fails, try individual deletes as fallback
+      for (const task of batch) {
+        try {
+          await bot.telegram.deleteMessage(task.chatId, task.messageId);
+        } catch (error: any) {
+          if (!error?.response?.description?.includes("message can't be deleted") &&
+            !error?.response?.description?.includes("message to delete not found")) {
+            console.log('Error deleting message:', {
+              error: error?.message,
+              description: error?.response?.description,
+              chatId: task.chatId,
+              messageId: task.messageId
+            });
+          }
+        }
+      }
     }
   }
 
   isProcessingQueue = false;
 }
+
 
 
 interface SendCommand {
@@ -852,7 +871,7 @@ bot.command('kill', async (ctx) => {
   let game = activeGames.get(chatId);
 
   if (!game) {
-    await ctx.reply('No active game to kill');
+    // No game to kill - just delete command and return
     queueMessageDeletion(ctx, ctx.message.message_id);
     return;
   }
@@ -868,13 +887,32 @@ bot.command('kill', async (ctx) => {
       return;
     }
 
+    // First edit the message to show game is killed
+    if (game.active && game.messageId) {
+      try {
+        await withRetry(async () => {
+          await ctx.telegram.editMessageText(
+            chatId,
+            game.messageId,
+            undefined,
+            `🎲 Game killed by ${isAdmin ? "Admin" : ctx.from?.first_name}`,
+          );
+        });
+      } catch (error) {
+        // Ignore edit errors - message might be gone
+        console.log('Failed to edit game message:', error);
+      }
+    }
+
+    // Mark game as inactive before deletion
     game.active = false;
     activeGames.delete(chatId);
 
-    // Delete old game message
-    queueMessageDeletion(ctx, game.messageId);
+    queueMessageDeletion(ctx, ctx.message.message_id)
+
+
   } catch (error) {
-    console.log('Error checking admin status:', error);
+    console.log('Error in kill command:', error);
     queueMessageDeletion(ctx, ctx.message.message_id);
   }
 });
