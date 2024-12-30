@@ -89,7 +89,6 @@ const TOKEN_CONFIG: Record<TokenType, TokenConfig> = {
 
 const SEND_URL = 'https://send.app/send';
 const BASE_URL = 'https://send.app/send/confirm';
-const SEND_MAIN_CHAT_ID = -1001976492624
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -597,10 +596,7 @@ function generateGameButtonText(winner: Player, game: GameState): string {
 bot.command('guess', async (ctx) => {
   try {
     if (!ctx.chat || Boolean(ctx.message.reply_to_message)) return;
-    if (ctx.chat.id === SEND_MAIN_CHAT_ID) {
-      queueMessageDeletion(ctx, ctx.message.message_id);
-      return;
-    }
+
     const chatId = ctx.chat.id;
 
     let cooldown = chatCooldowns.get(chatId);
