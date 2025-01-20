@@ -74,8 +74,8 @@ interface TokenConfig {
 
 const TOKEN_CONFIG: Record<TokenType, TokenConfig> = {
   [TokenType.SEND]: {
-    address: '0x3f14920c99BEB920Afa163031c4e47a3e03B3e4A',
-    decimals: 0n
+    address: '0xEab49138BA2Ea6dd776220fE26b7b8E446638956',
+    decimals: 18n
   },
   [TokenType.USDC]: {
     address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
@@ -305,7 +305,7 @@ async function sendMessage(ctx: Context, text: string) {
 
     // Send the response as a self-destructing message
     return await ctx.reply(text, {
-      parse_mode: 'Markdown',
+      parse_mode: 'MarkdownV2',
       disable_notification: true, // Silent notification
     });
 
@@ -315,23 +315,23 @@ async function sendMessage(ctx: Context, text: string) {
 }
 
 const helpMessage = `
-SendBot only works if your sendtag is in your name
+*SendBot* only works if your sendtag is in your name
+
 */send*
-  \`/send /vic 1000 SEND\`
+Send SEND tokens
+\`/send /vic 30 SEND\`
 
-__*/send a note*__
-  \`/send /vic 1000 > Hello!\`
+*Send with note*
+\`/send /vic 30 > Hello!\`
 
-__*/send a reply*__
-   \`/send 1000 > Hello!\
+*Send as reply*
+\`/send 30 > Hello!\`
 
-
-*/guess*
-• /guess - Random slots, 1000 SEND prize
-• /guess 2000 - Random slots, 2000 SEND prize
-• /guess 10 2000 - 10 slots, 2000 SEND prize
-• /kill - End your game
-`;
+*Games*
+• /guess \\- Random slots, 30 SEND prize
+• /guess 50 \\- Random slots, 50 SEND prize
+• /guess 10 50 \\- 10 slots, 50 SEND prize
+• /kill \\- End your game`;
 
 // Handle /help command
 bot.command('help', async (ctx) => {
@@ -632,20 +632,20 @@ bot.command('guess', async (ctx) => {
     const args = ctx.message.text.split(' ');
     let minNumber = 3;
     let maxNumber = Math.floor(Math.random() * 17) + minNumber; // default (3-20)ult amount
-    let amount = "1000";
+    let amount = "30";
 
 
     if (args[1]) {
       const arg = parseInt(args[1]);
       if (!isNaN(arg)) {
-        if (arg >= 500) {
-          // If 500 or more, treat as amount
+        if (arg >= 30) {
+          // If 30 or more, treat as amount
           amount = arg.toString();
         } else if (arg <= 20) {
           // If between 3 and 20, treat as player count
           if (args[2]) {
             const explicitAmount = parseInt(args[2]);
-            if (!isNaN(explicitAmount) && explicitAmount >= 500) {
+            if (!isNaN(explicitAmount) && explicitAmount >= 30) {
               amount = explicitAmount.toString();
             }
           }
