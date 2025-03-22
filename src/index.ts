@@ -599,7 +599,7 @@ interface GameState {
 let activeGames: Map<number, GameState> = new Map();
 
 function generateGameButtonText(winner: Player, game: GameState): string {
-  return `➡️ [‎](tg://user?id=${game.master.id}) ${game.master.first_name} send ${Number(game.amount).toLocaleString()} SEND to ${winner.sendtag} [‎](tg://user?id=${winner.userId})`
+  return `➡️ [‎](tg://user?id=${game.master.id}) ${game.master.first_name} send ${Number(game.amount).toLocaleString()} SEND to ${winner.sendtag} [‎](tg://user?id=${winner.userId})\n\n`
 }
 
 
@@ -618,15 +618,19 @@ bot.command('guess', async (ctx) => {
 
     // Get or initialize surge data for this chat
     let surgeData = chatSurgeData.get(chatId) || { lastTimestamp: 0, multiplier: 0 };
+    let game = activeGames.get(chatId);
 
-    if (currentTime - surgeData.lastTimestamp < SURGE_COOLDOWN) {
+    // Only increment streak if there's no active game
+    if (!game && currentTime - surgeData.lastTimestamp < SURGE_COOLDOWN) {
       surgeData.multiplier++;
+    } else if (game) {
+      // Keep existing streak if game is active
+      surgeData = chatSurgeData.get(chatId) || { lastTimestamp: 0, multiplier: 0 };
     } else {
       surgeData.multiplier = 0;
     }
     surgeData.lastTimestamp = currentTime;
     chatSurgeData.set(chatId, surgeData);
-
     const currentMinAmount = MIN_GUESS_AMOUNT + (surgeData.multiplier * SURGE_INCREASE);
 
     let cooldown = chatCooldowns.get(chatId);
@@ -635,7 +639,6 @@ bot.command('guess', async (ctx) => {
       cooldown.active = false;
     }
 
-    let game = activeGames.get(chatId);
     // Check if there's already an active game in this chat
     if (game) {
       const playerSendtags = game.players.map(player => player.sendtag).join(', ');
