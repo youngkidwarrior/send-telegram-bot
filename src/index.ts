@@ -337,7 +337,7 @@ Send SEND tokens
 • /guess 10 50 \\- 10 slots, 50 SEND prize
 • /kill \\- End your game
 
-*Hot Streak* 📈
+*Send Surge* 1 minute cooldown
 \`/guess \\- ${MIN_GUESS_AMOUNT} SEND minimum
 /guess \\- ${MIN_GUESS_AMOUNT + SURGE_INCREASE} SEND minimum
 /guess \\- ${MIN_GUESS_AMOUNT + (SURGE_INCREASE * 2)} SEND minimum\``;
@@ -598,10 +598,13 @@ interface GameState {
 // Track games by chat ID
 let activeGames: Map<number, GameState> = new Map();
 
-function generateGameButtonText(winner: Player, game: GameState): string {
-  return `➡️ [‎](tg://user?id=${game.master.id}) ${game.master.first_name} send ${Number(game.amount).toLocaleString()} SEND to ${winner.sendtag} [‎](tg://user?id=${winner.userId})\n\n`
-}
+function generateGameButtonText(winner: Player, game: GameState, surgeData?: SurgeData): string {
+  const surgeAmount = surgeData?.multiplier ? surgeData.multiplier * SURGE_INCREASE : 0;
+  const surgeText = surgeAmount > 0 ?
+    `+ ${surgeAmount.toLocaleString()} SEND from Send Surge` : '';
 
+  return `➡️ [‎](tg://user?id=${game.master.id}) ${game.master.first_name} send ${Number(game.amount).toLocaleString()} SEND to ${winner.sendtag} [‎](tg://user?id=${winner.userId})\n\n${surgeText}`
+}
 
 interface SurgeData {
   lastTimestamp: number;
@@ -620,11 +623,11 @@ bot.command('guess', async (ctx) => {
     let surgeData = chatSurgeData.get(chatId) || { lastTimestamp: 0, multiplier: 0 };
     let game = activeGames.get(chatId);
 
-    // Only increment streak if there's no active game
+    // Only increment surge if there's no active game
     if (!game && currentTime - surgeData.lastTimestamp < SURGE_COOLDOWN) {
       surgeData.multiplier++;
     } else if (game) {
-      // Keep existing streak if game is active
+      // Keep existing surge if game is active
       surgeData = chatSurgeData.get(chatId) || { lastTimestamp: 0, multiplier: 0 };
     } else {
       surgeData.multiplier = 0;
@@ -647,7 +650,7 @@ bot.command('guess', async (ctx) => {
         `${game.master.first_name} is sending ${formattedAmount} SEND\n` +
         `${game.players.length}/${game.maxNumber} players` +
         `\n\n${playerSendtags}` +
-        `${(surgeData?.multiplier ?? 0) > 0 ? `\n📈 Send Streak: ${surgeData.multiplier}` : ''}`, {
+        `${(surgeData?.multiplier ?? 0) > 0 ? `\n📈 Send Surge: ${surgeData.multiplier}` : ''}`, {
         reply_markup: {
           inline_keyboard: [[
             { text: '/join', callback_data: 'join_game' }
@@ -696,7 +699,7 @@ bot.command('guess', async (ctx) => {
       `${ctx.from?.first_name} is sending ${formattedAmount} SEND\n` +
       `${maxNumber} players` +
       `\n\n` +
-      `${(surgeMultiplier ?? 0) > 0 ? `\n📈 Send Streak: ${surgeMultiplier}` : ''}`, {
+      `${(surgeMultiplier ?? 0) > 0 ? `\n📈 Send Surge: ${surgeMultiplier}` : ''}`, {
       reply_markup: {
         inline_keyboard: [[
           { text: '/join', callback_data: 'join_game' }
@@ -800,7 +803,7 @@ bot.action('join_game', async (ctx) => {
           const messageText = `${game.master.first_name} is sending ${formattedAmount} SEND\n` +
             `${game.players.length}/${game.maxNumber} players` +
             `\n\n${playerSendtags}` +
-            `${(surgeData?.multiplier ?? 0) > 0 ? `\n📈 Send Streak: ${surgeData?.multiplier}` : ''}`
+            `${(surgeData?.multiplier ?? 0) > 0 ? `\n📈 Send Surge: ${surgeData?.multiplier}` : ''}`
 
 
           const messageOptions = {
