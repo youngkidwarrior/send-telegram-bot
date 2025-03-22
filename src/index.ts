@@ -603,7 +603,10 @@ function generateGameButtonText(winner: Player, game: GameState, surgeData?: Sur
   const surgeText = surgeAmount > 0 ?
     `+ ${surgeAmount.toLocaleString()} SEND from Send Surge` : '';
 
-  return `➡️ [‎](tg://user?id=${game.master.id}) ${game.master.first_name} send ${Number(game.amount).toLocaleString()} SEND to ${winner.sendtag} [‎](tg://user?id=${winner.userId})\n\n${surgeText}`
+  const escapedMasterName = game.master.first_name.replace(/_/g, '\\_');
+  const escapedSendtag = winner.sendtag.replace(/_/g, '\\_');
+
+  return `➡️ [‎](tg://user?id=${game.master.id}) ${escapedMasterName} send ${Number(game.amount).toLocaleString()} SEND to ${escapedSendtag} [‎](tg://user?id=${winner.userId})\n\n${surgeText}`
 }
 
 interface SurgeData {
@@ -739,7 +742,7 @@ bot.command('guess', async (ctx) => {
 const pendingPlayers = new Map<number, Set<Player>>();
 const COLLECTION_WINDOW = 1000; // 1 second window to collect clicks
 
-// Add this near your other handlers
+
 bot.action('join_game', async (ctx) => {
   if (!ctx.chat || !ctx.callbackQuery || !ctx.from) return;
 
