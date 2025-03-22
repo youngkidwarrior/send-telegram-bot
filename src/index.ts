@@ -593,6 +593,8 @@ function generateGameButtonText(winner: Player, game: GameState): string {
   return `➡️ [‎](tg://user?id=${game.master.id}) ${game.master.first_name} send ${Number(game.amount).toLocaleString()} SEND to ${winner.sendtag} [‎](tg://user?id=${winner.userId})`
 }
 
+const MIN_GUESS_AMOUNT = 100
+
 bot.command('guess', async (ctx) => {
   try {
     if (!ctx.chat || Boolean(ctx.message.reply_to_message)) return;
@@ -632,20 +634,20 @@ bot.command('guess', async (ctx) => {
     const args = ctx.message.text.split(' ');
     let minNumber = 3;
     let maxNumber = Math.floor(Math.random() * 17) + minNumber; // default (3-20)ult amount
-    let amount = "30";
+    let amount = MIN_GUESS_AMOUNT.toString();
 
 
     if (args[1]) {
       const arg = parseInt(args[1]);
       if (!isNaN(arg)) {
-        if (arg >= 30) {
-          // If 30 or more, treat as amount
+        if (arg >= MIN_GUESS_AMOUNT) {
+          // If more than min amount, treat as amount
           amount = arg.toString();
         } else if (arg <= 20) {
           // If between 3 and 20, treat as player count
           if (args[2]) {
             const explicitAmount = parseInt(args[2]);
-            if (!isNaN(explicitAmount) && explicitAmount >= 30) {
+            if (!isNaN(explicitAmount) && explicitAmount >= MIN_GUESS_AMOUNT) {
               amount = explicitAmount.toString();
             }
           }
