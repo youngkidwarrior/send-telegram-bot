@@ -90,6 +90,10 @@ const TOKEN_CONFIG: Record<TokenType, TokenConfig> = {
 const SEND_URL = 'https://send.app/send';
 const BASE_URL = 'https://send.app/send/confirm';
 
+const MIN_GUESS_AMOUNT = 50;
+const SURGE_COOLDOWN = 60000; // 1 minute in milliseconds
+const SURGE_INCREASE = 50; // Amount to increase by each time
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Admin Cacheing
@@ -328,10 +332,15 @@ Send SEND tokens
 \`/send 30 > Hello!\`
 
 *Games*
-• /guess \\- Random slots, 30 SEND prize
+• /guess \\- Random slots, ${MIN_GUESS_AMOUNT} SEND minimum
 • /guess 50 \\- Random slots, 50 SEND prize
 • /guess 10 50 \\- 10 slots, 50 SEND prize
-• /kill \\- End your game`;
+• /kill \\- End your game
+
+*Hot Streak* 📈
+\`/guess \\- ${MIN_GUESS_AMOUNT} SEND minimum
+/guess \\- ${MIN_GUESS_AMOUNT + SURGE_INCREASE} SEND minimum
+/guess \\- ${MIN_GUESS_AMOUNT + (SURGE_INCREASE * 2)} SEND minimum\``;
 
 // Handle /help command
 bot.command('help', async (ctx) => {
@@ -593,13 +602,32 @@ function generateGameButtonText(winner: Player, game: GameState): string {
   return `➡️ [‎](tg://user?id=${game.master.id}) ${game.master.first_name} send ${Number(game.amount).toLocaleString()} SEND to ${winner.sendtag} [‎](tg://user?id=${winner.userId})`
 }
 
-const MIN_GUESS_AMOUNT = 100
+
+interface SurgeData {
+  lastTimestamp: number;
+  multiplier: number;
+}
+const chatSurgeData = new Map<number, SurgeData>();
 
 bot.command('guess', async (ctx) => {
   try {
     if (!ctx.chat || Boolean(ctx.message.reply_to_message)) return;
 
     const chatId = ctx.chat.id;
+    const currentTime = Date.now();
+
+    // Get or initialize surge data for this chat
+    let surgeData = chatSurgeData.get(chatId) || { lastTimestamp: 0, multiplier: 0 };
+
+    if (currentTime - surgeData.lastTimestamp < SURGE_COOLDOWN) {
+      surgeData.multiplier++;
+    } else {
+      surgeData.multiplier = 0;
+    }
+    surgeData.lastTimestamp = currentTime;
+    chatSurgeData.set(chatId, surgeData);
+
+    const currentMinAmount = MIN_GUESS_AMOUNT + (surgeData.multiplier * SURGE_INCREASE);
 
     let cooldown = chatCooldowns.get(chatId);
     if (cooldown?.active) {
@@ -613,10 +641,10 @@ bot.command('guess', async (ctx) => {
       const playerSendtags = game.players.map(player => player.sendtag).join(', ');
       const formattedAmount = Number(game.amount).toLocaleString('en-US');
       const message = await ctx.reply(
-        `🎲 The game is on!\n` +
-        `First ${game.maxNumber} players\n\n` +
-        `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
-        `${game.master.first_name} is sending ${formattedAmount} SEND\n`, {
+        `${game.master.first_name} is sending ${formattedAmount} SEND\n` +
+        `${game.players.length}/${game.maxNumber} players` +
+        `\n\n${playerSendtags}` +
+        `${(surgeData?.multiplier ?? 0) > 0 ? `\n📈 Send Streak: ${surgeData.multiplier}` : ''}`, {
         reply_markup: {
           inline_keyboard: [[
             { text: '/join', callback_data: 'join_game' }
@@ -633,21 +661,20 @@ bot.command('guess', async (ctx) => {
     // Parse the command arguments
     const args = ctx.message.text.split(' ');
     let minNumber = 3;
-    let maxNumber = Math.floor(Math.random() * 17) + minNumber; // default (3-20)ult amount
-    let amount = MIN_GUESS_AMOUNT.toString();
-
+    let maxNumber = Math.floor(Math.random() * 17) + minNumber; // default (3-20)
+    let amount = currentMinAmount.toString();
 
     if (args[1]) {
       const arg = parseInt(args[1]);
       if (!isNaN(arg)) {
-        if (arg >= MIN_GUESS_AMOUNT) {
-          // If more than min amount, treat as amount
+        if (arg >= currentMinAmount) {
+          // If currentMinAmount or more, treat as amount
           amount = arg.toString();
         } else if (arg <= 20) {
           // If between 3 and 20, treat as player count
           if (args[2]) {
             const explicitAmount = parseInt(args[2]);
-            if (!isNaN(explicitAmount) && explicitAmount >= MIN_GUESS_AMOUNT) {
+            if (!isNaN(explicitAmount) && explicitAmount >= currentMinAmount) {
               amount = explicitAmount.toString();
             }
           }
@@ -659,13 +686,14 @@ bot.command('guess', async (ctx) => {
     // Generate random number between 1 and maxNumber
     const winningNumber = Math.floor(Math.random() * maxNumber) + 1;
     const formattedAmount = Number(amount).toLocaleString('en-US');
+    const surgeMultiplier = surgeData.multiplier
 
     // Send initial message and store its ID
     const message = await ctx.reply(
-      `🎲 New game started!\n` +
-      `First ${maxNumber} players\n\n` +
-      `Players: _ \n\n` +
-      `${ctx.from?.first_name} is sending ${formattedAmount} SEND\n`, {
+      `${ctx.from?.first_name} is sending ${formattedAmount} SEND\n` +
+      `${maxNumber} players` +
+      `\n\n` +
+      `${(surgeMultiplier ?? 0) > 0 ? `\n📈 Send Streak: ${surgeMultiplier}` : ''}`, {
       reply_markup: {
         inline_keyboard: [[
           { text: '/join', callback_data: 'join_game' }
@@ -765,10 +793,12 @@ bot.action('join_game', async (ctx) => {
         if (game.players.length < game.maxNumber) {
           const playerSendtags = game.players.map(player => player.sendtag).join(', ');
           const formattedAmount = Number(game.amount).toLocaleString('en-US');
-          const messageText = `🎲 The game is on!\n` +
-            `First ${game.maxNumber} players\n\n` +
-            `Players${game.players.length ? ` (${game.players.length})` : ''}: ${playerSendtags}\n\n` +
-            `${game.master.first_name} is sending ${formattedAmount} SEND.\n`;
+          const surgeData = chatSurgeData.get(chatId);
+          const messageText = `${game.master.first_name} is sending ${formattedAmount} SEND\n` +
+            `${game.players.length}/${game.maxNumber} players` +
+            `\n\n${playerSendtags}` +
+            `${(surgeData?.multiplier ?? 0) > 0 ? `\n📈 Send Streak: ${surgeData?.multiplier}` : ''}`
+
 
           const messageOptions = {
             reply_markup: {
