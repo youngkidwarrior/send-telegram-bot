@@ -12,7 +12,8 @@
   "dependencies": {
     "dotenv": "^16.4.1",
     "telegraf": "^4.15.3",
-    "telegraf-ratelimit": "^2.0.0"
+    "telegraf-ratelimit": "^2.0.0",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/node": "^20.11.16",

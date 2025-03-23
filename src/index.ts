@@ -1,6 +1,7 @@
 import { Telegraf, Context } from 'telegraf';
 import dotenv from 'dotenv';
 import { Message, MessageEntity, Update, User } from 'telegraf/types';
+import { ErrorSchema, Profile, ProfileResponseSchema } from './zod';
 
 dotenv.config();
 
@@ -60,6 +61,7 @@ type CommandContext = Context<Update.MessageUpdate<CommandMessage>>;
 // Initialize bot with your token
 const bot = new Telegraf(process.env.BOT_TOKEN ?? "");
 
+
 // Token configurations
 enum TokenType {
   SEND = 'SEND',
@@ -93,6 +95,62 @@ const BASE_URL = 'https://send.app/send/confirm';
 const MIN_GUESS_AMOUNT = 50;
 const SURGE_COOLDOWN = 60000; // 1 minute in milliseconds
 const SURGE_INCREASE = 50; // Amount to increase by each time
+
+const sendApiUrl = process.env.SEND_API_URL ?? ''
+const sendApiKey = process.env.SEND_SUPABASE_API_KEY ?? ''
+const sendApiVersion = process.env.SEND_API_VERSION ?? 'v1'
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Fetch
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+async function fetchProfile(sendtag: string): Promise<Profile | "InvalidTag" | null> {
+  const sendProfileLookupUrl = `${sendApiUrl}/rest/${sendApiVersion}/rpc/profile_lookup`
+  const response = await fetch(sendProfileLookupUrl, {
+    method: 'POST',
+    headers: {
+      'apikey': sendApiKey ?? "",
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      lookup_type: 'tag',
+      identifier: sendtag
+    })
+  });
+
+  if (!response.ok) {
+    const status = response.status;
+    if (status === 400 || status === 401) {
+      console.error('Invalid API key');
+      return null
+    }
+    console.error('Error fetching profile:', response.statusText);
+  }
+
+  const data = await response.json();
+
+
+  // First try to parse as error response
+  const errorResult = ErrorSchema.safeParse(data);
+  if (errorResult.success) {
+    if (errorResult.data.code === "P0001") {
+      return "InvalidTag";
+    }
+  }
+
+  // Then try to parse as profile response
+  const parsed = ProfileResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    return null
+  }
+
+  const profile = parsed.data[0];
+  if (!profile) {
+    return 'InvalidTag';
+  }
+
+  return profile;
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -839,8 +897,19 @@ bot.action('join_game', async (ctx) => {
           const deletedGame = activeGames.get(chatId);
           const isDeleted = activeGames.delete(chatId);
           if (isDeleted) {
-            const winner = game.players[game.winningNumber - 1];
-            const winningRecipient = winner.sendtag.split('/')[1];
+            let winner = game.players[game.winningNumber - 1];
+            let winningRecipient = winner.sendtag.split('/')[1];
+            let profile = await fetchProfile(winningRecipient);
+            if (profile === "InvalidTag") {
+              let winningNumber = Math.floor(Math.random() * game.maxNumber) + 1
+              winner = game.players[winningNumber - 1];
+              winningRecipient = winner.sendtag.split('/')[1];
+              // pick one new winner for now to make it simple
+              profile = await fetchProfile(winningRecipient);
+            }
+            if (!profile || profile === "InvalidTag") {
+              profile = null
+            }
 
             const winnerCommand = {
               recipient: winningRecipient,
@@ -849,6 +918,7 @@ bot.action('join_game', async (ctx) => {
             };
 
             const url = generateSendUrl(winnerCommand);
+            const basescanUrl = `https://basescan.org/token/${TOKEN_CONFIG.SEND.address}?a=${profile?.address}`;
             const text = generateGameButtonText(winner, game, surgeData);
 
             await withRetry(async () => {
@@ -859,13 +929,20 @@ bot.action('join_game', async (ctx) => {
               // Delete game message
               await queueMessageDeletion(ctx, game.messageId);
 
+              const inline_keyboard = [
+                [{ text: `/send`, url }]
+              ];
+              if (profile !== null) {
+                inline_keyboard.push([{ text: `Basescan 🔗`, url: basescanUrl }]);
+              }
+
               // Send winner message
               await ctx.reply(
                 `🎉 Winner\n # ${game.winningNumber} out of ${game.maxNumber}!\n\n${text}`,
                 {
                   parse_mode: 'Markdown',
                   reply_markup: {
-                    inline_keyboard: [[{ text: `/send`, url }]]
+                    inline_keyboard
                   }
                 }
               );
