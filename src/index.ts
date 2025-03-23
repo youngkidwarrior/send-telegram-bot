@@ -601,7 +601,7 @@ let activeGames: Map<number, GameState> = new Map();
 function generateGameButtonText(winner: Player, game: GameState, surgeData?: SurgeData): string {
   const surgeAmount = surgeData?.multiplier ? surgeData.multiplier * SURGE_INCREASE : 0;
   const surgeText = surgeAmount > 0 ?
-    `+ ${surgeAmount.toLocaleString()} SEND from Send Surge` : '';
+    `+ ${surgeAmount.toLocaleString()} SEND during Send Surge` : '';
 
   const escapedMasterName = game.master.first_name.replace(/_/g, '\\_');
   const escapedSendtag = winner.sendtag.replace(/_/g, '\\_');
@@ -754,6 +754,7 @@ bot.action('join_game', async (ctx) => {
     return;
 
   }
+  const surgeData = chatSurgeData.get(chatId);
 
   // Parse sendtag from name like in send reply
   const parsedName = ctx.from.first_name?.split('/');
@@ -802,7 +803,6 @@ bot.action('join_game', async (ctx) => {
         if (game.players.length < game.maxNumber) {
           const playerSendtags = game.players.map(player => player.sendtag).join(', ');
           const formattedAmount = Number(game.amount).toLocaleString('en-US');
-          const surgeData = chatSurgeData.get(chatId);
           const messageText = `${game.master.first_name} is sending ${formattedAmount} SEND\n` +
             `${game.players.length}/${game.maxNumber} players` +
             `\n\n${playerSendtags}` +
@@ -849,7 +849,7 @@ bot.action('join_game', async (ctx) => {
             };
 
             const url = generateSendUrl(winnerCommand);
-            const text = generateGameButtonText(winner, game);
+            const text = generateGameButtonText(winner, game, surgeData);
 
             await withRetry(async () => {
               if (!isDeleted) {
