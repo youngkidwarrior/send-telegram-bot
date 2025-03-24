@@ -649,17 +649,20 @@ interface GameState {
   chatId: number;
   messageId: number;
   maxNumber: number;
-  amount: string;
+  baseAmount: string;
+  surgeAmount: string;
+  amount: string; // baseAmount + surgeAmount
   master: User
 }
 
 // Track games by chat ID
 let activeGames: Map<number, GameState> = new Map();
 
-function generateGameButtonText(winner: Player, game: GameState, surgeData?: SurgeData): string {
-  const surgeAmount = surgeData?.multiplier ? surgeData.multiplier * SURGE_INCREASE : 0;
+function generateGameButtonText(winner: Player, game: GameState): string {
   const amount = Number(game.amount);
-  const surgeAdded = amount - surgeAmount < 0 ? 0 : amount - surgeAmount;
+  const surgeAmount = Number(game.surgeAmount);
+  const baseAmount = Number(game.baseAmount);
+  const surgeAdded = baseAmount - surgeAmount < 0 ? 0 : surgeAmount - baseAmount;
 
   const surgeText = surgeAdded > 0 ?
     `+ ${surgeAdded.toLocaleString()} SEND during Send Surge` : '';
@@ -667,7 +670,7 @@ function generateGameButtonText(winner: Player, game: GameState, surgeData?: Sur
   const escapedMasterName = game.master.first_name.replace(/_/g, '\\_');
   const escapedSendtag = winner.sendtag.replace(/_/g, '\\_');
 
-  return `➡️ [‎](tg://user?id=${game.master.id}) ${escapedMasterName} send ${Number(game.amount).toLocaleString()} SEND to ${escapedSendtag} [‎](tg://user?id=${winner.userId})\n\n${surgeText}`
+  return `➡️ [‎](tg://user?id=${game.master.id}) ${escapedMasterName} send ${amount.toLocaleString()} SEND to ${escapedSendtag} [‎](tg://user?id=${winner.userId})\n\n${surgeText}`
 }
 
 interface SurgeData {
@@ -698,7 +701,6 @@ bot.command('guess', async (ctx) => {
     }
     surgeData.lastTimestamp = currentTime;
     chatSurgeData.set(chatId, surgeData);
-    const currentMinAmount = MIN_GUESS_AMOUNT + (surgeData.multiplier * SURGE_INCREASE);
 
     let cooldown = chatCooldowns.get(chatId);
     if (cooldown?.active) {
@@ -732,20 +734,27 @@ bot.command('guess', async (ctx) => {
     const args = ctx.message.text.split(' ');
     let minNumber = 3;
     let maxNumber = Math.floor(Math.random() * 17) + minNumber; // default (3-20)
-    let amount = currentMinAmount.toString();
+
+    let baseAmount = MIN_GUESS_AMOUNT;
+    const surgeAmount = surgeData.multiplier * SURGE_INCREASE;
+    const currentMinAmount = baseAmount + surgeAmount;
+    let amount = currentMinAmount;
+
 
     if (args[1]) {
       const arg = parseInt(args[1]);
       if (!isNaN(arg)) {
         if (arg >= currentMinAmount) {
           // If currentMinAmount or more, treat as amount
-          amount = arg.toString();
+          baseAmount = arg;
+          amount = arg;
         } else if (arg <= 20) {
           // If between 3 and 20, treat as player count
           if (args[2]) {
             const explicitAmount = parseInt(args[2]);
             if (!isNaN(explicitAmount) && explicitAmount >= currentMinAmount) {
-              amount = explicitAmount.toString();
+              baseAmount = explicitAmount;
+              amount = explicitAmount;
             }
           }
           maxNumber = arg < minNumber ? minNumber : arg;
@@ -779,7 +788,9 @@ bot.command('guess', async (ctx) => {
       chatId,
       messageId: message.message_id,
       maxNumber,
-      amount,
+      amount: amount.toString(),
+      baseAmount: baseAmount.toString(),
+      surgeAmount: surgeAmount.toString(),
       master: ctx.from
     });
 
@@ -922,7 +933,7 @@ bot.action('join_game', async (ctx) => {
 
             const url = generateSendUrl(winnerCommand);
             const basescanUrl = `https://basescan.org/token/${TOKEN_CONFIG.SEND.address}?a=${profile?.address}`;
-            const text = generateGameButtonText(winner, game, surgeData);
+            const text = generateGameButtonText(winner, game);
 
             await withRetry(async () => {
               if (!isDeleted) {
