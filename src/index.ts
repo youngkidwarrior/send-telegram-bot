@@ -658,8 +658,11 @@ let activeGames: Map<number, GameState> = new Map();
 
 function generateGameButtonText(winner: Player, game: GameState, surgeData?: SurgeData): string {
   const surgeAmount = surgeData?.multiplier ? surgeData.multiplier * SURGE_INCREASE : 0;
-  const surgeText = surgeAmount > 0 ?
-    `+ ${surgeAmount.toLocaleString()} SEND during Send Surge` : '';
+  const amount = Number(game.amount);
+  const surgeAdded = amount - surgeAmount < 0 ? 0 : amount - surgeAmount;
+
+  const surgeText = surgeAdded > 0 ?
+    `+ ${surgeAdded.toLocaleString()} SEND during Send Surge` : '';
 
   const escapedMasterName = game.master.first_name.replace(/_/g, '\\_');
   const escapedSendtag = winner.sendtag.replace(/_/g, '\\_');
