@@ -947,7 +947,7 @@ bot.action('join_game', async (ctx) => {
                 [{ text: `/send`, url }]
 
               if (profile !== null) {
-                inline_keyboard.push({ text: `Basescae 🔗`, url: basescanUrl });
+                inline_keyboard.push({ text: `Basescan 🔗`, url: basescanUrl });
               }
 
               // Send winner message
