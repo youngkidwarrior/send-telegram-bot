@@ -104,7 +104,7 @@ const sendApiVersion = process.env.SEND_API_VERSION ?? 'v1'
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Fetch
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-async function fetchProfile(sendtag: string): Promise<Profile | "InvalidTag" | null> {
+async function fetchProfile(sendtag: string): Promise<Profile | null> {
   const sendProfileLookupUrl = `${sendApiUrl}/rest/${sendApiVersion}/rpc/profile_lookup`
   const response = await fetch(sendProfileLookupUrl, {
     method: 'POST',
@@ -133,8 +133,9 @@ async function fetchProfile(sendtag: string): Promise<Profile | "InvalidTag" | n
   // First try to parse as error response
   const errorResult = ErrorSchema.safeParse(data);
   if (errorResult.success) {
+    console.log('Error parsing profile:', errorResult.error);
     if (errorResult.data.code === "P0001") {
-      return "InvalidTag";
+      return null;
     }
   }
 
@@ -145,8 +146,9 @@ async function fetchProfile(sendtag: string): Promise<Profile | "InvalidTag" | n
   }
 
   const profile = parsed.data[0];
+
   if (!profile) {
-    return 'InvalidTag';
+    return null;
   }
 
   return profile;
@@ -830,8 +832,11 @@ bot.action('join_game', async (ctx) => {
 
   // Parse sendtag from name like in send reply
   const parsedName = ctx.from.first_name?.split('/');
-  const hasSendtag = parsedName !== undefined && parsedName.length > 1;
-  const cleanSendtag = hasSendtag && parsedName[1].replace(/[^a-zA-Z0-9_]/gu, '').trim();
+  const parsedMasterName = game.master.first_name.split('/');
+  const hasSendtag = (splitName: string[]) =>
+    splitName !== undefined && splitName.length > 1;
+  const cleanSendtag = hasSendtag(parsedName) ? parsedName[1].replace(/[^a-zA-Z0-9_]/gu, '').trim() : undefined;
+  const cleanMasterSendtag = hasSendtag(parsedMasterName) ? parsedMasterName[1].replace(/[^a-zA-Z0-9_]/gu, '').trim() : undefined;
 
   if (!hasSendtag || !cleanSendtag) {
     await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'Add sendtag to your name!');
@@ -911,19 +916,9 @@ bot.action('join_game', async (ctx) => {
           const deletedGame = activeGames.get(chatId);
           const isDeleted = activeGames.delete(chatId);
           if (isDeleted) {
-            let winner = game.players[game.winningNumber - 1];
-            let winningRecipient = winner.sendtag.split('/')[1];
-            let profile = await fetchProfile(winningRecipient);
-            if (profile === "InvalidTag") {
-              let winningNumber = Math.floor(Math.random() * game.maxNumber) + 1
-              winner = game.players[winningNumber - 1];
-              winningRecipient = winner.sendtag.split('/')[1];
-              // pick one new winner for now to make it simple
-              profile = await fetchProfile(winningRecipient);
-            }
-            if (!profile || profile === "InvalidTag") {
-              profile = null
-            }
+            const winner = game.players[game.winningNumber - 1];
+            const winningRecipient = winner.sendtag.split('/')[1];
+            let profile = cleanMasterSendtag ? await fetchProfile(cleanMasterSendtag) : null;
 
             const winnerCommand = {
               recipient: winningRecipient,
@@ -946,8 +941,8 @@ bot.action('join_game', async (ctx) => {
               const inline_keyboard =
                 [{ text: `/send`, url }]
 
-              if (profile !== null) {
-                inline_keyboard.push({ text: `Basescan 🔗`, url: basescanUrl });
+              if (!!profile) {
+                inline_keyboard.push({ text: `Onchain Activity 🔗`, url: basescanUrl });
               }
 
               // Send winner message
