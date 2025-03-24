@@ -939,10 +939,10 @@ bot.action('join_game', async (ctx) => {
               await queueMessageDeletion(ctx, game.messageId);
 
               const inline_keyboard =
-                [{ text: `/send`, url }]
+                [[{ text: `/send`, url }]]
 
               if (!!profile) {
-                inline_keyboard.push({ text: `Onchain Activity 🔗`, url: basescanUrl });
+                inline_keyboard.push([{ text: `Onchain Activity 🔗`, url: basescanUrl }]);
               }
 
               // Send winner message
@@ -951,7 +951,7 @@ bot.action('join_game', async (ctx) => {
                 {
                   parse_mode: 'Markdown',
                   reply_markup: {
-                    inline_keyboard: [inline_keyboard]
+                    inline_keyboard
                   }
                 }
               );
