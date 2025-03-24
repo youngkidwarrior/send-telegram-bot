@@ -607,7 +607,7 @@ const chatCooldowns: Map<number, {
 async function startCooldown(ctx: Context, chatId: number) {
   try {
     const cooldownMsg = await ctx.reply(
-      `⏳ Sendtag Cooldown: 45 sec`,
+      `⏳ SendSurge Cooldown: 60 sec`,
       { disable_notification: true }
     );
 
@@ -615,7 +615,7 @@ async function startCooldown(ctx: Context, chatId: number) {
       active: true,
       messageId: cooldownMsg.message_id,
       lastUpdate: Date.now(),
-      endTime: Math.floor(Date.now() / 1000) + 45,
+      endTime: Math.floor((Date.now() + SURGE_COOLDOWN) / 1000),
     };
     chatCooldowns.set(chatId, cooldown);
 
@@ -1078,7 +1078,7 @@ bot.on('message', async (ctx) => {
       try {
         queueMessageDeletion(ctx, cooldown.messageId);
         const cooldownMsg = await ctx.reply(
-          `⏳ Sendtag Cooldown (${Math.ceil((cooldown.endTime - Date.now() / 1000))}s)`,
+          `⏳ Send Surge Cooldown (${Math.ceil((cooldown.endTime - Date.now() / 1000))}s)`,
           { parse_mode: 'HTML' }
         );
         cooldown.messageId = cooldownMsg.message_id;
