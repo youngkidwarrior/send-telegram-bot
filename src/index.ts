@@ -662,9 +662,8 @@ let activeGames: Map<number, GameState> = new Map();
 
 function generateGameButtonText(winner: Player, game: GameState): string {
   const amount = Number(game.amount);
-  const surgeAmount = Number(game.surgeAmount);
   const baseAmount = Number(game.baseAmount);
-  const surgeAdded = surgeAmount - baseAmount > 0 ? surgeAmount - baseAmount : 0
+  const surgeAdded = amount - baseAmount > 0 ? amount - baseAmount : 0
 
   const surgeText = surgeAdded > 0 ?
     `+ ${surgeAdded.toLocaleString()} SEND during Send Surge` : '';
@@ -757,9 +756,13 @@ bot.command('guess', async (ctx) => {
             if (!isNaN(explicitAmount) && explicitAmount >= currentMinAmount) {
               baseAmount = explicitAmount;
               amount = explicitAmount;
+            } else {
+              baseAmount = explicitAmount
             }
           }
           maxNumber = arg < minNumber ? minNumber : arg;
+        } else if (arg > MIN_GUESS_AMOUNT) {
+          baseAmount = arg
         }
       }
     }
