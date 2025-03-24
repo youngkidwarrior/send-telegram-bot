@@ -664,7 +664,7 @@ function generateGameButtonText(winner: Player, game: GameState): string {
   const amount = Number(game.amount);
   const surgeAmount = Number(game.surgeAmount);
   const baseAmount = Number(game.baseAmount);
-  const surgeAdded = baseAmount - surgeAmount < 0 ? 0 : surgeAmount - baseAmount;
+  const surgeAdded = surgeAmount - baseAmount > 0 ? surgeAmount - baseAmount : 0
 
   const surgeText = surgeAdded > 0 ?
     `+ ${surgeAdded.toLocaleString()} SEND during Send Surge` : '';
