@@ -932,11 +932,11 @@ bot.action('join_game', async (ctx) => {
               // Delete game message
               await queueMessageDeletion(ctx, game.messageId);
 
-              const inline_keyboard = [
+              const inline_keyboard =
                 [{ text: `/send`, url }]
-              ];
+
               if (profile !== null) {
-                inline_keyboard.push([{ text: `Basescan 🔗`, url: basescanUrl }]);
+                inline_keyboard.push({ text: `Basescae 🔗`, url: basescanUrl });
               }
 
               // Send winner message
@@ -945,7 +945,7 @@ bot.action('join_game', async (ctx) => {
                 {
                   parse_mode: 'Markdown',
                   reply_markup: {
-                    inline_keyboard
+                    inline_keyboard: [inline_keyboard]
                   }
                 }
               );
