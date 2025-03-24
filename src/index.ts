@@ -712,7 +712,7 @@ bot.command('guess', async (ctx) => {
       const formattedAmount = Number(game.amount).toLocaleString('en-US');
       const message = await ctx.reply(
         `${game.master.first_name} is sending ${formattedAmount} SEND\n` +
-        `${game.players.length}/${game.maxNumber} players` +
+        `${game.players.length} / ${game.maxNumber} players` +
         `\n\n${playerSendtags}` +
         `${(surgeData?.multiplier ?? 0) > 0 ? `\n📈 Send Surge: ${surgeData.multiplier}` : ''}`, {
         reply_markup: {
@@ -760,8 +760,8 @@ bot.command('guess', async (ctx) => {
 
     // Send initial message and store its ID
     const message = await ctx.reply(
-      `${ctx.from?.first_name} is sending ${formattedAmount} SEND\n` +
-      `${maxNumber} players` +
+      `${ctx.from?.first_name} is sending ${formattedAmount} SEND\n\n` +
+      `0 / ${maxNumber} players` +
       `\n\n` +
       `${(surgeMultiplier ?? 0) > 0 ? `\n📈 Send Surge: ${surgeMultiplier}` : ''}`, {
       reply_markup: {
@@ -865,7 +865,7 @@ bot.action('join_game', async (ctx) => {
           const playerSendtags = game.players.map(player => player.sendtag).join(', ');
           const formattedAmount = Number(game.amount).toLocaleString('en-US');
           const messageText = `${game.master.first_name} is sending ${formattedAmount} SEND\n` +
-            `${game.players.length}/${game.maxNumber} players` +
+            `${game.players.length} / ${game.maxNumber} players` +
             `\n\n${playerSendtags}` +
             `${(surgeData?.multiplier ?? 0) > 0 ? `\n📈 Send Surge: ${surgeData?.multiplier}` : ''}`
 
