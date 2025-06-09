@@ -2,6 +2,8 @@ import { Telegraf, Context } from 'telegraf';
 import dotenv from 'dotenv';
 import { Message, MessageEntity, Update, User } from 'telegraf/types';
 import { ErrorSchema, Profile, ProfileResponseSchema } from './zod';
+import { cacheEarnFactoryEvents, getVaultBalance, } from './viem';
+import { Address } from 'viem';
 
 dotenv.config();
 
@@ -153,6 +155,12 @@ async function fetchProfile(sendtag: string): Promise<Profile | null> {
 
   return profile;
 }
+
+// Initialize cache and start periodic updates
+cacheEarnFactoryEvents();
+
+// Check for new events every hour
+setInterval(cacheEarnFactoryEvents, 60 * 60 * 1000);
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -819,6 +827,38 @@ bot.command('guess', async (ctx) => {
 const pendingPlayers = new Map<number, Set<Player>>();
 const COLLECTION_WINDOW = 1000; // 1 second window to collect clicks
 
+const MIN_BALANCE_TO_PLAY = 5n * 1000000n; // $5 min in savings (with 6 decimals)
+
+async function checkUserBalances(sendtags: string[]): Promise<Map<string, boolean>> {
+  const results = new Map<string, boolean>();
+
+
+  try {
+    // Fetch all profiles in parallel
+    const profiles = await Promise.all(
+      sendtags.map(tag => fetchProfile(tag))
+    );
+
+    // Check balances for valid profiles
+    profiles.forEach(profile => {
+      if (!profile?.address) {
+        results.set(profile?.tag ?? '', false);
+        return;
+      }
+
+      const balance = getVaultBalance(profile.address as Address);
+      results.set(profile.tag, balance !== null && balance >= MIN_BALANCE_TO_PLAY);
+    });
+
+  } catch (error) {
+    console.error('Error checking user balances:', error);
+  }
+
+  return results;
+}
+
+
+
 
 bot.action('join_game', async (ctx) => {
   if (!ctx.chat || !ctx.callbackQuery || !ctx.from) return;
@@ -829,8 +869,8 @@ bot.action('join_game', async (ctx) => {
   if (!game) {
     await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'No active game!');
     return;
-
   }
+
   const surgeData = chatSurgeData.get(chatId);
 
   // Parse sendtag from name like in send reply
@@ -841,43 +881,62 @@ bot.action('join_game', async (ctx) => {
   const cleanSendtag = hasSendtag(parsedName) ? parsedName[1].replace(/[^a-zA-Z0-9_]/gu, '').trim() : undefined;
   const cleanMasterSendtag = hasSendtag(parsedMasterName) ? parsedMasterName[1].replace(/[^a-zA-Z0-9_]/gu, '').trim() : undefined;
 
-  if (!hasSendtag || !cleanSendtag) {
+  if (!hasSendtag(parsedName) || !cleanSendtag) {
     await ctx.telegram.answerCbQuery(ctx.callbackQuery.id, 'Add sendtag to your name!');
-    return
+    return;
   }
 
   if (!pendingPlayers.has(chatId)) {
     pendingPlayers.set(chatId, new Set());
+
     // Process after collection window
     setTimeout(async () => {
       try {
         const players = Array.from(pendingPlayers.get(chatId) || []);
         pendingPlayers.delete(chatId);
 
-        // Deduplicate players based on userId
+        // Deduplicate players based on userId first
         const uniquePlayers = players.filter((player, index, self) =>
           index === self.findIndex(p => p.userId === player.userId)
         );
 
-        // Take first N unique players
-        const availableSlots = game.maxNumber - game.players.length;
-        const newPlayers = uniquePlayers.slice(0, availableSlots);
-        game.players.push(...newPlayers);
+        // Get sendtags from unique players only
+        const sendtags = uniquePlayers.map(p => p.sendtag.substring(1)); // Remove leading '/'
+        const balanceResults = await checkUserBalances(sendtags);
 
-        // Notify players of their position or if they missed out
-        await Promise.all(players.map(async (player, index) => {
-          const position = game.players.length - newPlayers.length + index + 1;
+        // Filter unique players with sufficient balance
+        const validEarnPlayers = uniquePlayers.filter(player =>
+          balanceResults.get(player.sendtag.substring(1)) === true
+        );
+
+        // Notify invalid players first
+        const invalidPlayers = uniquePlayers.filter(player =>
+          !balanceResults.get(player.sendtag.substring(1))
+        );
+
+
+
+        // Take first N valid players
+        const availableSlots = game.maxNumber - game.players.length;
+        const newPlayers = validEarnPlayers.slice(0, availableSlots);
+
+        // Notify valid players before adding them
+        await Promise.all(validEarnPlayers.map(async (player, index) => {
           try {
             await ctx.telegram.answerCbQuery(
               player.callbackQueryId,
               index < availableSlots
-                ? `You're #${position} of ${game.maxNumber} 🎲`
+                ? `You're #${index + 1} of ${game.maxNumber} 🎲`
                 : `Game filled up! You were #${index + 1} 😢`
             );
           } catch (error) {
-            console.error('Error notifying player:', error);
+            console.error('Error notifying valid player:', error);
           }
         }));
+
+        // Finally add valid players to game
+        game.players.push(...newPlayers);
+
 
         // Update game message
         if (game.players.length < game.maxNumber) {
@@ -914,6 +973,18 @@ bot.action('join_game', async (ctx) => {
             }
           }
         }
+
+        await Promise.all(invalidPlayers.map(async (player) => {
+          try {
+            await ctx.telegram.answerCbQuery(
+              player.callbackQueryId,
+              'Deposit 5 USDC in savings account to play!'
+            );
+          } catch (error) {
+            console.error('Error notifying invalid player:', error);
+          }
+        }));
+
         // Process winner if game is full
         if (game.players.length >= game.maxNumber) {
           const deletedGame = activeGames.get(chatId);
