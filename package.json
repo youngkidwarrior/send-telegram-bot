@@ -1,25 +1,33 @@
 {
   "name": "send-telegram-bot",
+  "type": "module",
   "version": "1.0.0",
   "description": "Telegram bot for generating Send app links",
-  "main": "dist/index.js",
+  "main": "src/Index.res.js",
   "scripts": {
+    "prestart": "tsc",
     "start": "node dist/index.js",
-    "build": "tsc",
-    "dev": "ts-node src/index.ts",
-    "watch": "nodemon src/index.ts"
+    "ts:build": "tsc",
+    "start:ts": "yarn ts:build && node dist/index.js",
+    "dev:ts": "nodemon --exec \"yarn ts:build && node dist/index.js\" --watch src --ext ts",
+    "start:res": "node src/Index.res.js",
+    "build": "rescript build",
+    "dev": "rescript build && node src/Index.res.js",
+    "dev:watch": "nodemon --exec \"rescript build && node src/Index.res.js\" --watch src --ext res",
+    "res:build": "rescript build",
+    "res:dev": "rescript build -w"
   },
   "dependencies": {
     "dotenv": "^16.4.1",
     "telegraf": "^4.15.3",
     "telegraf-ratelimit": "^2.0.0",
-    "zod": "^3.24.2"
+    "zod": "^4.1.0"
   },
   "devDependencies": {
-    "@types/node": "^20.11.16",
+    "@types/node": "^20",
     "nodemon": "^3.0.3",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.3.3"
+    "rescript": "12.0.0-beta.6",
+    "typescript": "^5"
   },
   "engines": {
     "node": ">=16.0.0"
