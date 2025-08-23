@@ -5,12 +5,7 @@
   "description": "Telegram bot for generating Send app links",
   "main": "src/Index.res.js",
   "scripts": {
-    "prestart": "tsc",
-    "start": "node dist/index.js",
-    "ts:build": "tsc",
-    "start:ts": "yarn ts:build && node dist/index.js",
-    "dev:ts": "nodemon --exec \"yarn ts:build && node dist/index.js\" --watch src --ext ts",
-    "start:res": "node src/Index.res.js",
+    "start": "node src/Index.res.js",
     "build": "rescript build",
     "dev": "rescript build && node src/Index.res.js",
     "dev:watch": "nodemon --exec \"rescript build && node src/Index.res.js\" --watch src --ext res",
@@ -24,10 +19,8 @@
     "zod": "^4.1.0"
   },
   "devDependencies": {
-    "@types/node": "^20",
     "nodemon": "^3.0.3",
-    "rescript": "12.0.0-beta.6",
-    "typescript": "^5"
+    "rescript": "12.0.0-beta.6"
   },
   "engines": {
     "node": ">=16.0.0"
