@@ -172,33 +172,33 @@ let cleanSendtag = tag =>
   }
 
 let parseSendNote = args => {
-  // Try newline first
+  // Find first token that contains a newline or '>' and treat everything after as note
   let newlineIndex = args->Array.findIndexOpt(String.includes(_, "\n"))
   let carrotIndex = args->Array.findIndexOpt(String.includes(_, ">"))
+  let joinWithSpace = tokens =>
+    tokens->Array.reduce("", (acc, tok) => if acc == "" { tok } else { acc ++ " " ++ tok })
+  let stripLeadingGt = s => s->String.replaceRegExp(RegExp.fromString("^[\\s>]+"), "")->String.trim
   switch (newlineIndex, carrotIndex) {
   | (None, None) => None
-  | (Some(newlineIndex), Some(carrotIndex)) =>
-    let start = newlineIndex < carrotIndex ? newlineIndex : carrotIndex
-    Some(
-      args
-      ->Array.slice(~start)
-      ->Array.reduce("", (acc, note) => acc ++ note),
-    )
-
-  | (Some(start), None) =>
-    Some(
-      args
-      ->Array.slice(~start)
-      ->Array.reduce("", (acc, note) => acc ++ note),
-    )
-  | (None, Some(start)) =>
-    Some(
-      args
-      ->Array.slice(~start)
-      ->Array.reduce("", (acc, note) => {
-        acc ++ note
-      }),
-    )
+  | (Some(newlineIndex), Some(carrotIndex)) => {
+      let start = if newlineIndex < carrotIndex { newlineIndex } else { carrotIndex }
+      let tokens = args->Array.slice(~start)
+      let joined = joinWithSpace(tokens)
+      let cleaned = stripLeadingGt(joined)
+      if cleaned == "" { None } else { Some(cleaned) }
+    }
+  | (Some(start), None) => {
+      let tokens = args->Array.slice(~start)
+      let joined = joinWithSpace(tokens)
+      let cleaned = stripLeadingGt(joined)
+      if cleaned == "" { None } else { Some(cleaned) }
+    }
+  | (None, Some(start)) => {
+      let tokens = args->Array.slice(~start)
+      let joined = joinWithSpace(tokens)
+      let cleaned = stripLeadingGt(joined)
+      if cleaned == "" { None } else { Some(cleaned) }
+    }
   }
 }
 
