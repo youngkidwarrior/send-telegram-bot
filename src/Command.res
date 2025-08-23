@@ -135,23 +135,88 @@ let parseInt = str => {
   Int.fromString(str)
 }
 
-// Parse guess command arguments - SEND token only. Args: [/guess] [maxPlayers?] [baseAmountUnits?]
+// Parse guess command arguments to mirror TS behavior:
+// - No args: random players (3-20), baseAmount = minGuessAmount
+// - One arg:
+//   - <= 20 => treat as players (clamped to >= minPlayers), baseAmount = minGuessAmount
+//   - >= minGuessAmount => treat as baseAmount
+//   - else => baseAmount = minGuessAmount
+// - Two args:
+//   - First <= 20 => players, second >= minGuessAmount => baseAmount = second
+//   - Otherwise => treat first as baseAmount if >= minGuessAmount
 let parseGuessCommand = args => {
-  let maybeMax = args[0]->Option.flatMap(Int.fromString(_))
-  let maybeBaseAmount = args[1]->Option.flatMap(BigInt.fromString(_))
+  // Normalize first two args like we do elsewhere: trim and strip commas
+  let arg1 =
+    args
+    ->Array.get(0)
+    ->Option.map(String.trim)
+    ->Option.map(a => a->String.replaceRegExp(RegExp.fromString(",", ~flags="g"), ""))
+  let arg2 =
+    args
+    ->Array.get(1)
+    ->Option.map(String.trim)
+    ->Option.map(a => a->String.replaceRegExp(RegExp.fromString(",", ~flags="g"), ""))
 
   let randomMax = {
     let range = Game.maxPlayers - Game.minPlayers + 1
     Game.minPlayers + Int.fromFloat(Math.floor(Math.random() *. Float.fromInt(range)))
   }
 
-  switch (maybeMax, maybeBaseAmount) {
-  | (None, None) => Some({maxNumber: ?Some(randomMax), baseAmount: ?Some(Game.minGuessAmount)})
-  | (Some(maxNumber), None) =>
-    Some({maxNumber: ?Some(maxNumber), baseAmount: ?Some(Game.minGuessAmount)})
-  | (None, Some(baseAmount)) => Some({maxNumber: ?Some(randomMax), baseAmount: ?Some(baseAmount)})
-  | (Some(maxNumber), Some(baseAmount)) =>
-    Some({maxNumber: ?Some(maxNumber), baseAmount: ?Some(baseAmount)})
+  let minInt = Game.minGuessAmount->BigInt.toString->Int.fromString->Option.getOr(50)
+
+  switch (arg1, arg2) {
+  | (None, _) =>
+    // No args
+    Some({maxNumber: ?Some(randomMax), baseAmount: ?Some(Game.minGuessAmount)})
+  | (Some(a1), None) =>
+    switch Int.fromString(a1) {
+    | Some(n1) =>
+      if n1 <= Game.maxPlayers {
+        // Treat as players, clamp to >= minPlayers
+        let maxN = if n1 < Game.minPlayers {
+          Game.minPlayers
+        } else {
+          n1
+        }
+        Some({maxNumber: ?Some(maxN), baseAmount: ?Some(Game.minGuessAmount)})
+      } else if n1 >= minInt {
+        // Treat as base amount
+        Some({maxNumber: ?Some(randomMax), baseAmount: ?Some(BigInt.fromInt(n1))})
+      } else {
+        // Fallback to minimum
+        Some({maxNumber: ?Some(randomMax), baseAmount: ?Some(Game.minGuessAmount)})
+      }
+    | None => Some({maxNumber: ?Some(randomMax), baseAmount: ?Some(Game.minGuessAmount)})
+    }
+  | (Some(a1), Some(a2)) =>
+    switch Int.fromString(a1) {
+    | Some(n1) =>
+      if n1 <= Game.maxPlayers {
+        let maxN = if n1 < Game.minPlayers {
+          Game.minPlayers
+        } else {
+          n1
+        }
+        let baseOpt = switch Int.fromString(a2) {
+        | Some(n2) =>
+          if n2 >= minInt {
+            Some(BigInt.fromInt(n2))
+          } else {
+            None
+          }
+        | None => None
+        }
+        let base = baseOpt->Option.getOr(Game.minGuessAmount)
+        Some({maxNumber: ?Some(maxN), baseAmount: ?Some(base)})
+      } else if n1 >= minInt {
+        // First arg looks like amount
+        Some({maxNumber: ?Some(randomMax), baseAmount: ?Some(BigInt.fromInt(n1))})
+      } else {
+        // Fallback to minimum
+        Some({maxNumber: ?Some(randomMax), baseAmount: ?Some(Game.minGuessAmount)})
+      }
+    | None => Some({maxNumber: ?Some(randomMax), baseAmount: ?Some(Game.minGuessAmount)})
+    }
   }
 }
 
