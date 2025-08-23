@@ -27,16 +27,21 @@ let games: Map.t<Telegraf.chatId, Game.state> = Map.make()
 let surges: Map.t<Telegraf.chatId, Game.surge> = Map.make()
 let pendingJoins: Map.t<Telegraf.chatId, Game.pendingJoin> = Map.make()
 
-let sleep = ms => Promise.make((resolve, _) => {
-  Js.Global.setTimeout(() => resolve()->ignore, ms)->ignore
-})
+let sleep = ms =>
+  Promise.make((resolve, _) => {
+    Js.Global.setTimeout(() => resolve()->ignore, ms)->ignore
+  })
 
 let rec withRetry = async (fn, ~maxRetries=3, ~initialDelay=1000, ~attempt=0) => {
   if attempt >= maxRetries {
     Error("Max retries exceeded")
   } else {
-    if attempt > 0 { await sleep(initialDelay * 2 ** (attempt - 1)) }
-    try { Ok(await fn()) } catch { | _ => await withRetry(fn, ~maxRetries, ~initialDelay, ~attempt=attempt + 1) }
+    if attempt > 0 {
+      await sleep(initialDelay * 2 ** (attempt - 1))
+    }
+    try {Ok(await fn())} catch {
+    | _ => await withRetry(fn, ~maxRetries, ~initialDelay, ~attempt=attempt + 1)
+    }
   }
 }
 
@@ -44,18 +49,29 @@ let rec withRetry = async (fn, ~maxRetries=3, ~initialDelay=1000, ~attempt=0) =>
 let mdEscape = MessageFormat.escapeMarkdown
 
 let repeat = (ch: string, count: int) => {
-  let rec aux = (i, acc) => if i <= 0 { acc } else { aux(i - 1, acc ++ ch) }
+  let rec aux = (i, acc) =>
+    if i <= 0 {
+      acc
+    } else {
+      aux(i - 1, acc ++ ch)
+    }
   aux(count, "")
 }
 
-let buildSendText = (ctx: Telegraf.Context.t, recipientDisplay: string, amountUnitsOpt: option<bigint>, noteOpt: option<string>): string => {
+let buildSendText = (
+  ctx: Telegraf.Context.t,
+  recipientDisplay: string,
+  amountUnitsOpt: option<bigint>,
+  noteOpt: option<string>,
+): string => {
   // Sender name and recipient
   let senderName = ctx.from->Option.mapOr("", u => u->Telegraf.User.first_name)
   let markdownSender = senderName->mdEscape
   let markdownRecipient = recipientDisplay->mdEscape
   // Determine header content
   let headerCore = switch amountUnitsOpt {
-  | Some(units) when units > 0n => `*${Command.formatAmount(units)} ${Command.send.symbol} to ${markdownRecipient}*`
+  | Some(units) if units > 0n =>
+    `*${Command.formatAmount(units)} ${Command.send.symbol} to ${markdownRecipient}*`
   | _ => `*${markdownSender} sending to ${markdownRecipient}*`
   }
   // Optional note
@@ -69,29 +85,36 @@ let buildSendText = (ctx: Telegraf.Context.t, recipientDisplay: string, amountUn
     }
   }
   // Optional reply mention (if replying to a user)
-  let replyText = switch ctx.message->Option.flatMap(Message.replyToMessage(_))->Option.flatMap(m => m->Message.from) {
-  | Some(u) => "[‎](tg://user?id=" ++ (u->Telegraf.User.id->Telegraf.IntId.toInt->Int.toString) ++ ")"
+  let replyText = switch ctx.message
+  ->Option.flatMap(Message.replyToMessage(_))
+  ->Option.flatMap(m => m->Message.from) {
+  | Some(u) =>
+    "[‎](tg://user?id=" ++ u->Telegraf.User.id->Telegraf.IntId.toInt->Int.toString ++ ")"
   | None => ""
   }
   // Build final text using inline code backticks pattern
   let header = "`\n┃ `" ++ headerCore
   let senderLine = switch amountUnitsOpt {
-  | Some(units) when units > 0n =>
-      let padLen = 28 - String.length(markdownSender) - 8 /* "sent by " */
-      let padding = if padLen > 0 { repeat(" ", padLen) } else { "" }
-      "\n┃` " ++ padding ++ "`sent by " ++ markdownSender ++ "`"
+  | Some(units) if units > 0n =>
+    let padLen = 28 - String.length(markdownSender) - 8 /* "sent by " */
+    let padding = if padLen > 0 {
+      repeat(" ", padLen)
+    } else {
+      ""
+    }
+    "\n┃` " ++ padding ++ "`sent by " ++ markdownSender ++ "`"
   | _ => ""
   }
   header ++ noteText ++ senderLine ++ replyText
 }
 
 // Delete queue
- type deleteTask = { chatId: Telegraf.chatId, messageId: Telegraf.messageId }
- let deleteQueue: array<deleteTask> = []
- let isProcessingDeleteQueue = ref(false)
+type deleteTask = {chatId: Telegraf.chatId, messageId: Telegraf.messageId}
+let deleteQueue: array<deleteTask> = []
+let isProcessingDeleteQueue = ref(false)
 
- let drainDeleteQueue = async () => {
-  if !(isProcessingDeleteQueue.contents) {
+let drainDeleteQueue = async () => {
+  if !isProcessingDeleteQueue.contents {
     isProcessingDeleteQueue.contents = true
     Console.log("[deleteQueue] start draining")
     // Process items one by one to keep it simple and safe
@@ -99,13 +122,17 @@ let buildSendText = (ctx: Telegraf.Context.t, recipientDisplay: string, amountUn
       switch deleteQueue->Js.Array2.pop {
       | Some(task) => {
           Console.log(
-            `[/delete] deleting chatId=${task.chatId->Telegraf.IntId.toInt->Int.toString}, messageId=${task.messageId->Telegraf.IntId.toInt->Int.toString}`,
+            `[/delete] deleting chatId=${task.chatId
+              ->Telegraf.IntId.toInt
+              ->Int.toString}, messageId=${task.messageId->Telegraf.IntId.toInt->Int.toString}`,
           )
-          let _ = await telegraf->telegram->Telegram.deleteMessage(task.chatId, task.messageId)
-            ->Promise.catch(_e => {
-              Console.warn("[/delete] deleteMessage failed, ignoring")
-              Promise.resolve(false)
-            })
+          let _ = await telegraf
+          ->telegram
+          ->Telegram.deleteMessage(task.chatId, task.messageId)
+          ->Promise.catch(_e => {
+            Console.warn("[/delete] deleteMessage failed, ignoring")
+            Promise.resolve(false)
+          })
           await sleep(100)
         }
       | None => ()
@@ -118,25 +145,26 @@ let buildSendText = (ctx: Telegraf.Context.t, recipientDisplay: string, amountUn
   }
 }
 
- // One-shot scheduling for delete queue (pattern modeled after processPendingJoins)
- let deleteQueueTimeout = ref(None)
- let scheduleDeleteQueueDrain = () => {
-   switch deleteQueueTimeout.contents {
-   | Some(_) => ()
-   | None =>
-     deleteQueueTimeout.contents = Some(
-       Js.Global.setTimeout(() => {
-         // reset the timer ref and trigger drain
-         deleteQueueTimeout.contents = None
-         drainDeleteQueue()->ignore
-       }, 1000),
-     )
-   }
- }
- let enqueueDelete = (task: deleteTask) => {
-   deleteQueue->Array.push(task)
-   if !(isProcessingDeleteQueue.contents) { scheduleDeleteQueueDrain() } else { () }
- }
+// One-shot scheduling for delete queue (pattern modeled after processPendingJoins)
+let deleteQueueTimeout = ref(None)
+let scheduleDeleteQueueDrain = () => {
+  switch deleteQueueTimeout.contents {
+  | Some(_) => ()
+  | None => deleteQueueTimeout.contents = Some(Js.Global.setTimeout(() => {
+        // reset the timer ref and trigger drain
+        deleteQueueTimeout.contents = None
+        drainDeleteQueue()->ignore
+      }, 1000))
+  }
+}
+let enqueueDelete = (task: deleteTask) => {
+  deleteQueue->Array.push(task)
+  if !isProcessingDeleteQueue.contents {
+    scheduleDeleteQueueDrain()
+  } else {
+    ()
+  }
+}
 
 module AdminUtils = {
   type adminCacheValue = {ids: array<Telegraf.userId>, timestamp: float}
@@ -162,26 +190,37 @@ let handleGuessCommand = async (ctx: Telegraf.Context.t) => {
   let chatId = ctx.chat->Option.mapOr(Telegraf.IntId.unsafeOfInt(0), c => c.id)
   let state = games->Map.get(chatId)
   let surge = surges->Map.get(chatId)->Option.getOr({Game.multiplier: 0, updatedAt: 0.})
-switch state {
+  switch state {
   | Some(Game.Collecting(_) as s) => {
       let messageText = Game.gameStateText(s)
       let opts: Telegraf.MessageOptions.t = {
-        replyMarkup: { inlineKeyboard: [[{text: "/join", callbackData: Some("join_game"), url: None}]] },
+        replyMarkup: {
+          inlineKeyboard: [[{text: "/join", callbackData: Some("join_game"), url: None}]],
+        },
         parseMode: None,
       }
-let messageId = switch s { | Game.Collecting(c) => c.messageId | _ => Telegraf.IntId.unsafeOfInt(0) }
+      let messageId = switch s {
+      | Game.Collecting(c) => c.messageId
+      | _ => Telegraf.IntId.unsafeOfInt(0)
+      }
       Console.log(`[/edit guess] prefix: ${messageText->String.slice(~start=0, ~end=120)}`)
-      let _ = await withRetry(() => ctx->Context.telegram->Telegram.editMessageTextL(~chatId, ~messageId, ~text=messageText, ~options=opts))
+      let _ = await withRetry(() =>
+        ctx
+        ->Context.telegram
+        ->Telegram.editMessageTextL(~chatId, ~messageId, ~text=messageText, ~options=opts)
+      )
       switch ctx.message->Option.flatMap(Message.messageId) {
       | Some(msgId) => enqueueDelete({chatId, messageId: msgId})
       | None => ()
       }
-      Ok(())
+      Ok()
     }
   | _ => {
       let (chatId, newState) = switch ctx.message {
-      | Some(m) => switch m->Message.from {
-        | Some(from) => Game.createGame(chatId, from, ~maxPlayers=10, ~baseAmount=Game.minGuessAmount, ~surge)
+      | Some(m) =>
+        switch m->Message.from {
+        | Some(from) =>
+          Game.createGame(chatId, from, ~maxPlayers=10, ~baseAmount=Game.minGuessAmount, ~surge)
         | None => (chatId, Game.Cancelled(Game.Error("Missing user information")))
         }
       | None => (chatId, Game.Cancelled(Game.Error("Missing message information")))
@@ -191,17 +230,29 @@ let messageId = switch s { | Game.Collecting(c) => c.messageId | _ => Telegraf.I
       | Game.Collecting(_) => {
           let messageText = Game.gameStateText(newState)
           let opts: Telegraf.MessageOptions.t = {
-            replyMarkup: { inlineKeyboard: [[{text: "/join", callbackData: Some("join_game"), url: None}]] },
+            replyMarkup: {
+              inlineKeyboard: [[{text: "/join", callbackData: Some("join_game"), url: None}]],
+            },
             parseMode: None,
           }
           switch await withRetry(() => ctx->Context.reply(messageText, ~options=opts)) {
           | Ok(message) => {
-              switch message->Message.messageId { | Some(msgId) => games->Map.set(chatId, switch newState { | Game.Collecting(c) => Game.Collecting({...c, messageId: msgId}) | other => other }) | None => () }
+              switch message->Message.messageId {
+              | Some(msgId) =>
+                games->Map.set(
+                  chatId,
+                  switch newState {
+                  | Game.Collecting(c) => Game.Collecting({...c, messageId: msgId})
+                  | other => other
+                  },
+                )
+              | None => ()
+              }
               switch ctx.message->Option.flatMap(Message.messageId) {
               | Some(msgId) => enqueueDelete({chatId, messageId: msgId})
               | None => ()
               }
-              Ok(())
+              Ok()
             }
           | Error(e) => Error(`Failed to send game message: ${e}`)
           }
@@ -218,59 +269,94 @@ let processPendingJoins = async chatId => {
   switch (pendingJoin, gameState) {
   | (Some({players}), Some(Game.Collecting(_) as state)) => {
       let _ = pendingJoins->Map.delete(chatId)
-      let uniquePlayers: array<Game.player> =
-        players->Array.reduce([], (acc: array<Game.player>, player: Game.player) =>
-          if acc->Array.some((p: Game.player) => p.userId === player.userId) {
-            acc
-          } else {
-            acc->Array.concat([player])
-          }
-        )
+      let uniquePlayers: array<Game.player> = players->Array.reduce([], (
+        acc: array<Game.player>,
+        player: Game.player,
+      ) =>
+        if acc->Array.some((p: Game.player) => p.userId === player.userId) {
+          acc
+        } else {
+          acc->Array.concat([player])
+        }
+      )
       let positions: array<(Game.player, int)> = []
-      let finalState =
-        uniquePlayers->Array.reduce(state, (currentState, player: Game.player) => {
-          let (ns, pos) = Game.addPlayer(currentState, player)
-          positions->Array.push((player, pos))
-          ns
-        })
+      let finalState = uniquePlayers->Array.reduce(state, (currentState, player: Game.player) => {
+        let (ns, pos) = Game.addPlayer(currentState, player)
+        positions->Array.push((player, pos))
+        ns
+      })
       games->Map.set(chatId, finalState)
       let _ = await Promise.all(
         positions->Array.map(((player: Game.player, position: int)) => {
-          let message =
-            if position > 0 {
-              switch finalState {
-              | Game.Completed(c) =>
-                if c.winner.userId == player.userId { "🎉 You won! 🎉" } else { `You're #${position->Int.toString} 🎲` }
-              | _ => `You're #${position->Int.toString} 🎲`
+          let message = if position > 0 {
+            switch finalState {
+            | Game.Completed(c) =>
+              if c.winner.userId == player.userId {
+                "🎉 You won! 🎉"
+              } else {
+                `You're #${position->Int.toString} 🎲`
               }
-            } else {
-              "Game filled up! 😢"
+            | _ => `You're #${position->Int.toString} 🎲`
             }
-          Telegraf.telegram(telegraf)->Telegram.answerCbQuery(player.callbackQueryId, Some(message), None)
+          } else {
+            "Game filled up! 😢"
+          }
+          Telegraf.telegram(telegraf)->Telegram.answerCbQuery(
+            player.callbackQueryId,
+            Some(message),
+            None,
+          )
         }),
       )
       switch finalState {
       | Game.Collecting(c) => {
           let messageText = Game.gameStateText(finalState)
           Console.log(`[/edit collect] prefix: ${messageText->String.slice(~start=0, ~end=120)}`)
-          let options: Telegraf.MessageOptions.t = { replyMarkup: { inlineKeyboard: [[{text: "/join", callbackData: Some("join_game"), url: None}]] }, parseMode: None }
-          let _ = await withRetry(() => Telegraf.telegram(telegraf)->Telegram.editMessageTextL(~chatId, ~messageId=c.messageId, ~text=messageText, ~options))
-          Ok(())
+          let options: Telegraf.MessageOptions.t = {
+            replyMarkup: {
+              inlineKeyboard: [[{text: "/join", callbackData: Some("join_game"), url: None}]],
+            },
+            parseMode: None,
+          }
+          let _ = await withRetry(() =>
+            Telegraf.telegram(telegraf)->Telegram.editMessageTextL(
+              ~chatId,
+              ~messageId=c.messageId,
+              ~text=messageText,
+              ~options,
+            )
+          )
+          Ok()
         }
       | Game.Completed(c) => {
           let winnerMessage = Game.formatWinnerMessage(finalState)
           let sendtag = c.winner.sendtag->String.replace("/", "")
-          let command: Command.sendOptions = { recipient: sendtag, amount: ?Some(c.amount->BigInt.toString) }
+          let command: Command.sendOptions = {
+            recipient: sendtag,
+            amount: ?Some(c.amount->BigInt.toString),
+          }
           let url = Command.generateSendUrl(command)
-          let options = { ...MessageFormat.defaultOptions, format: #Markdown, replyMarkup: Some(MessageFormat.inlineKeyboard([[MessageFormat.button(~text="Send", ~url)]])) }
+          let options = {
+            ...MessageFormat.defaultOptions,
+            format: #Markdown,
+            replyMarkup: Some(
+              MessageFormat.inlineKeyboard([[MessageFormat.button(~text="Send", ~url)]]),
+            ),
+          }
           let telegramOptions = MessageFormat.toTelegramOptions(options)
-          let _ = await withRetry(() => Telegraf.telegram(telegraf)->Telegram.sendMessage(chatId, `${Game.gameStateText(finalState)}\n\n${winnerMessage}`, ~options=telegramOptions))
-          Ok(())
+          let _ = await withRetry(() =>
+            Telegraf.telegram(telegraf)->Telegram.sendMessage(
+              chatId,
+              `${Game.gameStateText(finalState)}\n\n${winnerMessage}`,
+              ~options=telegramOptions,
+            )
+          )
+          Ok()
         }
-      | _ => Ok(())
+      | _ => Ok()
       }
     }
-  | _ => Ok(())
+  | _ => Ok()
   }
 }
 
@@ -281,16 +367,40 @@ let handleJoinGame = async (ctx: Telegraf.Context.t, query: Telegraf.CallbackQue
   | (Some(Game.Collecting(_) as state), Some(user)) => {
       let nameParts = user->Telegraf.User.first_name->String.split("/")
       let rawSendtag = nameParts->Array.get(1)->Option.getOr("")
-      let cleanSendtag = rawSendtag->String.replaceRegExp(RegExp.fromString("[^a-zA-Z0-9_]", ~flags="gu"), "")->String.trim
-      if cleanSendtag == "" { Game.Error(Game.NoSendTag) } else {
-        let isAlreadyPending = pendingJoins->Map.get(chatId)->Option.flatMap(({players}) => players->Array.find(p => p.userId == user->Telegraf.User.id))->Option.isSome
-        let isAlreadyInGame = switch state { | Game.Collecting(c) => c.players->Array.some(p => p.userId == user->Telegraf.User.id) | _ => false }
-        if isAlreadyInGame || isAlreadyPending { Game.Error(Game.AlreadyJoined) } else {
-          let player: Game.player = { sendtag: `/${cleanSendtag}`, userId: user->Telegraf.User.id, callbackQueryId: query->Telegraf.CallbackQuery.id }
-          let pendingJoin = pendingJoins->Map.get(chatId)->Option.getOr({ players: [], timeout: None })
+      let cleanSendtag =
+        rawSendtag
+        ->String.replaceRegExp(RegExp.fromString("[^a-zA-Z0-9_]", ~flags="gu"), "")
+        ->String.trim
+      if cleanSendtag == "" {
+        Game.Error(Game.NoSendTag)
+      } else {
+        let isAlreadyPending =
+          pendingJoins
+          ->Map.get(chatId)
+          ->Option.flatMap(({players}) =>
+            players->Array.find(p => p.userId == user->Telegraf.User.id)
+          )
+          ->Option.isSome
+        let isAlreadyInGame = switch state {
+        | Game.Collecting(c) => c.players->Array.some(p => p.userId == user->Telegraf.User.id)
+        | _ => false
+        }
+        if isAlreadyInGame || isAlreadyPending {
+          Game.Error(Game.AlreadyJoined)
+        } else {
+          let player: Game.player = {
+            sendtag: `/${cleanSendtag}`,
+            userId: user->Telegraf.User.id,
+            callbackQueryId: query->Telegraf.CallbackQuery.id,
+          }
+          let pendingJoin =
+            pendingJoins->Map.get(chatId)->Option.getOr({players: [], timeout: None})
           let updatedPlayers = pendingJoin.players->Array.concat([player])
-          let timeout = switch pendingJoin.timeout { | Some(t) => Some(t) | None => Some(Js.Global.setTimeout(() => { processPendingJoins(chatId)->ignore }, 1000)) }
-          pendingJoins->Map.set(chatId, { players: updatedPlayers, timeout })
+          let timeout = switch pendingJoin.timeout {
+          | Some(t) => Some(t)
+          | None => Some(Js.Global.setTimeout(() => {processPendingJoins(chatId)->ignore}, 1000))
+          }
+          pendingJoins->Map.set(chatId, {players: updatedPlayers, timeout})
           Game.Success(updatedPlayers->Array.length)
         }
       }
@@ -309,34 +419,52 @@ let handleJoinGame = async (ctx: Telegraf.Context.t, query: Telegraf.CallbackQue
   await ctx->Telegraf.Context.answerCbQuery(Some(responseMessage), None)
 }
 
-
 let setupBot = () => {
-  telegraf->Telegraf.command("guess", async ctx => {
+  telegraf
+  ->Telegraf.command("guess", async ctx => {
     let rawText = ctx.message->Option.flatMap(Message.text)->Option.getOr("")
     Console.log(`[/guess] raw: ${rawText}`)
     let _ = await handleGuessCommand(ctx)
-    ()
-  })->ignore
-  telegraf->Telegraf.command("send", async ctx => {
+  })
+  ->ignore
+  telegraf
+  ->Telegraf.command("send", async ctx => {
     // Log raw incoming text
     let rawText = ctx.message->Option.flatMap(Message.text)->Option.getOr("")
     Console.log(`[/send] raw: ${rawText}`)
     switch Command.fromContext(ctx) {
-    | Ok(Command.Send({recipient, amount: ?amount, note: ?note})) => {
-        let amountStr = switch amount { | Some(a) => a | None => "(none)" }
-        let noteStr = switch note { | Some(_) => "(provided)" | None => "(none)" }
-        Console.log(`[/send] parsed -> recipient=${recipient}, amount=${amountStr}, note=${noteStr}`)
-        let command: Command.sendOptions = { recipient, amount: ?amount, note: ?note }
+    | Ok(Command.Send({recipient, ?amount, ?note})) => {
+        let amountStr = switch amount {
+        | Some(a) => a
+        | None => "(none)"
+        }
+        let noteStr = switch note {
+        | Some(_) => "(provided)"
+        | None => "(none)"
+        }
+        Console.log(
+          `[/send] parsed -> recipient=${recipient}, amount=${amountStr}, note=${noteStr}`,
+        )
+        let command: Command.sendOptions = {recipient, ?amount, ?note}
         let url = Command.generateSendUrl(command)
         Console.log(`[/send] generated url: ${url}`)
         let recipientDisplay = recipient->String.startsWith("/") ? recipient : `/${recipient}`
         // Build display text exactly like the TS bot (MarkdownV2 styled)
-        let unitsOpt = switch amount { | Some(a) => Command.parseAmountToUnits(a) | None => None }
+        let unitsOpt = switch amount {
+        | Some(a) => Command.parseAmountToUnits(a)
+        | None => None
+        }
         let messageText = buildSendText(ctx, recipientDisplay, unitsOpt, note)
         // Match TS behavior: inline keyboard button labeled '/send' linking to the generated URL
-        let replyMarkup = MessageFormat.inlineKeyboard([[MessageFormat.button(~text="/send", ~url)]])
+        let replyMarkup = MessageFormat.inlineKeyboard([
+          [MessageFormat.button(~text="/send", ~url)],
+        ])
         // Ensure MarkdownV2 parse mode
-        let options = { ...MessageFormat.defaultOptions, format: #Markdown, replyMarkup: Some(replyMarkup) }
+        let options = {
+          ...MessageFormat.defaultOptions,
+          format: #Markdown,
+          replyMarkup: Some(replyMarkup),
+        }
         let telegramOptions = MessageFormat.toTelegramOptions(options)
         // Always reply (don't restrict to private chats)
         switch await withRetry(() => ctx->Context.reply(messageText, ~options=telegramOptions)) {
@@ -346,14 +474,23 @@ let setupBot = () => {
         let chatId2 = ctx.chat->Option.mapOr(Telegraf.IntId.unsafeOfInt(0), c => c.id)
         switch ctx.message->Option.flatMap(Message.messageId) {
         | Some(msgId) => {
-            Console.log(`[/send] queue delete original message: ${msgId->Telegraf.IntId.toInt->Int.toString}`)
+            Console.log(
+              `[/send] queue delete original message: ${msgId->Telegraf.IntId.toInt->Int.toString}`,
+            )
             enqueueDelete({chatId: chatId2, messageId: msgId})
           }
         | None => Console.log("[/send] no original messageId to delete")
         }
       }
     | Ok(other) => {
-        Console.warn(`[/send] unexpected command variant: ${switch other { | Command.Guess(_) => "Guess" | Command.Kill => "Kill" | Command.Help => "Help" | _ => "Other" }}`)
+        Console.warn(
+          `[/send] unexpected command variant: ${switch other {
+            | Command.Guess(_) => "Guess"
+            | Command.Kill => "Kill"
+            | Command.Help => "Help"
+            | _ => "Other"
+            }}`,
+        )
         // Always queue deletion of original command
         let chatId2 = ctx.chat->Option.mapOr(Telegraf.IntId.unsafeOfInt(0), c => c.id)
         switch ctx.message->Option.flatMap(Message.messageId) {
@@ -367,8 +504,9 @@ let setupBot = () => {
         let isPrivate = ctx.chat->Option.mapOr(false, c => c.id->Telegraf.IntId.toInt > 0)
         if isPrivate {
           let _ = await ctx->Context.reply(`Command error: ${msg}`, ~options=defaultTelegramOptions)
+        } else {
           ()
-        } else { () }
+        }
         // Always queue deletion of original command
         let chatId2 = ctx.chat->Option.mapOr(Telegraf.IntId.unsafeOfInt(0), c => c.id)
         switch ctx.message->Option.flatMap(Message.messageId) {
@@ -377,19 +515,29 @@ let setupBot = () => {
         }
       }
     }
-  })->ignore
-  telegraf->Telegraf.command("kill", async ctx => {
+  })
+  ->ignore
+  telegraf
+  ->Telegraf.command("kill", async ctx => {
     let rawText = ctx.message->Option.flatMap(Message.text)->Option.getOr("")
     Console.log(`[/kill] raw: ${rawText}`)
     let chatId = ctx.chat->Option.mapOr(Telegraf.IntId.unsafeOfInt(0), c => c.id)
-    let isAdmin = switch ctx.from { | Some(from) => (await AdminUtils.getAdminIds(ctx, chatId))->Array.includes(from->Telegraf.User.id) | None => false }
+    let isAdmin = switch ctx.from {
+    | Some(from) =>
+      (await AdminUtils.getAdminIds(ctx, chatId))->Array.includes(from->Telegraf.User.id)
+    | None => false
+    }
     if !isAdmin {
       Console.warn("[/kill] non-admin attempted kill")
       let isPrivate = ctx.chat->Option.mapOr(false, c => c.id->Telegraf.IntId.toInt > 0)
       if isPrivate {
-        let _ = await ctx->Context.reply("Only admins can kill games", ~options=defaultTelegramOptions)
+        let _ = await ctx->Context.reply(
+          "Only admins can kill games",
+          ~options=defaultTelegramOptions,
+        )
+      } else {
         ()
-      } else { () }
+      }
     } else {
       switch games->Map.get(chatId) {
       | Some(Game.Collecting(st)) => {
@@ -403,30 +551,51 @@ let setupBot = () => {
           // Edit existing game message instead of replying to chat
           let messageText = Game.gameStateText(newState)
           Console.log(`[/edit kill] prefix: ${messageText->String.slice(~start=0, ~end=120)}`)
-          let _ = await withRetry(() => Telegraf.telegram(telegraf)->Telegram.editMessageTextL(~chatId, ~messageId=st.messageId, ~text=messageText, ~options=defaultTelegramOptions))
+          let _ = await withRetry(() =>
+            Telegraf.telegram(telegraf)->Telegram.editMessageTextL(
+              ~chatId,
+              ~messageId=st.messageId,
+              ~text=messageText,
+              ~options=defaultTelegramOptions,
+            )
+          )
         }
       | _ => {
           let isPrivate = ctx.chat->Option.mapOr(false, c => c.id->Telegraf.IntId.toInt > 0)
           if isPrivate {
-            let _ = await ctx->Context.reply("No active game to kill", ~options=defaultTelegramOptions)
+            let _ = await ctx->Context.reply(
+              "No active game to kill",
+              ~options=defaultTelegramOptions,
+            )
+          } else {
             ()
-          } else { () }
+          }
         }
       }
     }
-  })->ignore
-  telegraf->Telegraf.command("help", async ctx => {
+  })
+  ->ignore
+  telegraf
+  ->Telegraf.command("help", async ctx => {
     // Match TS help text and reply in all chats
     let helpText = "\n*SendBot* only works if your sendtag is in your name\n\n*/send*\nSend SEND tokens\n\`/send /vic 30 SEND\`\n\n*Send with note*\n\`/send /vic 30 > Hello!\`\n\n*Send as reply*\n\`/send 30 > Hello!\`\n\n*Games*\n• /guess \\- Random slots, 50 SEND minimum\n• /guess 50 \\- Random slots, 50 SEND prize\n• /guess 10 50 \\- 10 slots, 50 SEND prize\n• /kill \\- End your game\n\n*Send Surge* 1 minute cooldown\n\`/guess \\- 50 SEND minimum\n/guess \\- 100 SEND minimum\n/guess \\- 150 SEND minimum\`"
-    let options = { ...MessageFormat.defaultOptions, format: #Markdown }
+    let options = {...MessageFormat.defaultOptions, format: #Markdown}
     let _ = await ctx->Context.reply(helpText, ~options=MessageFormat.toTelegramOptions(options))
-  })->ignore
-  telegraf->Telegraf.command("start", async ctx => {
+  })
+  ->ignore
+  telegraf
+  ->Telegraf.command("start", async ctx => {
     let startText = "\n👋 Welcome to the Send Bot!\n\nThis bot allows you to play guessing games with SEND tokens and send tokens to other users.\n\nUse /help to see available commands.\n"
     let isPrivate = ctx.chat->Option.mapOr(false, c => c.id->Telegraf.IntId.toInt > 0)
-    if isPrivate { let _ = await ctx->Context.reply(startText, ~options=defaultTelegramOptions) } else { () }
-  })->ignore
-  telegraf->Telegraf.action("join_game", async ctx => {
+    if isPrivate {
+      let _ = await ctx->Context.reply(startText, ~options=defaultTelegramOptions)
+    } else {
+      ()
+    }
+  })
+  ->ignore
+  telegraf
+  ->Telegraf.action("join_game", async ctx => {
     switch ctx.callbackQuery {
     | Some(q) => {
         Console.log("[/join] join_game tapped")
@@ -434,7 +603,8 @@ let setupBot = () => {
       }
     | None => Console.warn("[/join] no callbackQuery present")
     }
-  })->ignore
+  })
+  ->ignore
 }
 
 setupBot()
@@ -442,7 +612,7 @@ setupBot()
 switch Process.env->Dict.get("DOMAIN") {
 | Some(domain) => {
     let port = Process.env->Dict.get("PORT")->Option.flatMap(Int.fromString(_))->Option.getOr(3000)
-    let options: Telegraf.LaunchOptions.t = { webhook: Some({ domain, port: Some(port) }) }
+    let options: Telegraf.LaunchOptions.t = {webhook: Some({domain, port: Some(port)})}
     telegraf->Telegraf.launchWithOptions(options)->ignore
   }
 | None => telegraf->Telegraf.launch->ignore
@@ -452,4 +622,3 @@ Process.onSIGINT(() => {
   Console.log("Bot is shutting down")
   let _ = telegraf->stop
 })
-

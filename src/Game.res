@@ -6,7 +6,7 @@ open Telegraf
 type player = {
   sendtag: string,
   userId: userId,
-  callbackQueryId: callbackQueryId
+  callbackQueryId: callbackQueryId,
 }
 
 // Game states
@@ -52,7 +52,7 @@ type pendingJoin = {
 // State for tracking surges
 type surge = {
   updatedAt: float,
-  multiplier: int
+  multiplier: int,
 }
 
 // Error types
@@ -79,8 +79,7 @@ let surgeIncrease = 50n // Amount to increase by each time
 let formatAmount = amount => {
   // Format number with commas
   let pattern = "\\B(?=(\\d{3})+(?!\\d))"
-  BigInt.toString(amount)
-  ->String.replaceRegExp(RegExp.fromString(pattern, ~flags="g"), ",")
+  BigInt.toString(amount)->String.replaceRegExp(RegExp.fromString(pattern, ~flags="g"), ",")
 }
 
 let formatPlayerList = players => {
@@ -99,28 +98,45 @@ let gameStateText = state => {
   | Collecting(c) => {
       let playerCount = c.players->Array.length
       let playerList = c.players->formatPlayerList
-      let surgeText = c.surgeAmount > 0n ? "\n📈 Send Surge: " ++ BigInt.toString(c.surgeAmount / surgeIncrease) : ""
+      let surgeText =
+        c.surgeAmount > 0n
+          ? "\n📈 Send Surge: " ++ BigInt.toString(c.surgeAmount / surgeIncrease)
+          : ""
 
-      c.master->User.first_name ++ " is sending " ++ (c.amount->formatAmount) ++ " SEND\n\n" ++
-      Int.toString(playerCount) ++ " / " ++ Int.toString(c.maxPlayers) ++ " players\n\n" ++
-      playerList ++ surgeText
+      c.master->User.first_name ++
+      " is sending " ++
+      c.amount->formatAmount ++
+      " SEND\n\n" ++
+      Int.toString(playerCount) ++
+      " / " ++
+      Int.toString(c.maxPlayers) ++
+      " players\n\n" ++
+      playerList ++
+      surgeText
     }
-  | Completed(c) => {
-      "🎉 Winner\n# " ++ Int.toString(c.winningNumber) ++ " out of " ++ Int.toString(c.players->Array.length) ++ "!"
-    }
-  | Cancelled(reason) => {
-      switch reason {
-      | AdminCancelled(user) => `🎲 Game killed by Admin ${user->User.first_name}`
-      | MasterCancelled => `🎲 Game killed by creator`
-      | Expired => `🎲 Game expired`
-      | Error(msg) => `❌ Game error: ${msg}`
-      }
+  | Completed(c) =>
+    "🎉 Winner\n# " ++
+    Int.toString(c.winningNumber) ++
+    " out of " ++
+    Int.toString(c.players->Array.length) ++ "!"
+  | Cancelled(reason) =>
+    switch reason {
+    | AdminCancelled(user) => `🎲 Game killed by Admin ${user->User.first_name}`
+    | MasterCancelled => `🎲 Game killed by creator`
+    | Expired => `🎲 Game expired`
+    | Error(msg) => `❌ Game error: ${msg}`
     }
   }
 }
 
 // Create a new game
-let createGame = (chatId: Telegraf.chatId, master: Telegraf.User.t, ~maxPlayers=10, ~baseAmount=minGuessAmount, ~surge=?) => {
+let createGame = (
+  chatId: Telegraf.chatId,
+  master: Telegraf.User.t,
+  ~maxPlayers=10,
+  ~baseAmount=minGuessAmount,
+  ~surge=?,
+) => {
   // Generate random winning number (1-based)
   let winningNumber = {
     // Convert maxPlayers to float for the calculation
@@ -133,8 +149,8 @@ let createGame = (chatId: Telegraf.chatId, master: Telegraf.User.t, ~maxPlayers=
 
   // Calculate amount with surge if provided
   let surgeAmount = switch surge {
-    | Some(s) if isSurgeActive(s) => BigInt.fromInt(s.multiplier) * surgeIncrease
-    | _ => 0n
+  | Some(s) if isSurgeActive(s) => BigInt.fromInt(s.multiplier) * surgeIncrease
+  | _ => 0n
   }
 
   // Calculate full amount
@@ -160,30 +176,30 @@ let createGame = (chatId: Telegraf.chatId, master: Telegraf.User.t, ~maxPlayers=
 let addPlayer = (state, player) => {
   switch state {
   | Collecting(collecting) =>
-      let players = collecting.players->Array.concat([player])
-      let newState = if players->Array.length >= collecting.maxPlayers {
-        // Game is full - determine winner
-        let winner = switch players->Array.get(collecting.winningNumber - 1) {
-          | Some(player) => player
-          | None => failwith("Winner index out of bounds") // This should never happen due to our length check
-        }
-        Completed({
-          // Copy common fields
-          winningNumber: collecting.winningNumber,
-          amount: collecting.amount,
-          baseAmount: collecting.baseAmount,
-          surgeAmount: collecting.surgeAmount,
-          master: collecting.master,
-          // Updated fields
-          players,
-          // Add winner
-          winner,
-        })
-      } else {
-        // Game continues
-        Collecting({...collecting, players})
+    let players = collecting.players->Array.concat([player])
+    let newState = if players->Array.length >= collecting.maxPlayers {
+      // Game is full - determine winner
+      let winner = switch players->Array.get(collecting.winningNumber - 1) {
+      | Some(player) => player
+      | None => failwith("Winner index out of bounds") // This should never happen due to our length check
       }
-      (newState, Array.indexOf(players, player) + 1)
+      Completed({
+        // Copy common fields
+        winningNumber: collecting.winningNumber,
+        amount: collecting.amount,
+        baseAmount: collecting.baseAmount,
+        surgeAmount: collecting.surgeAmount,
+        master: collecting.master,
+        // Updated fields
+        players,
+        // Add winner
+        winner,
+      })
+    } else {
+      // Game continues
+      Collecting({...collecting, players})
+    }
+    (newState, Array.indexOf(players, player) + 1)
   | _ => (state, -1) // Cannot add player to a non-collecting game
   }
 }
@@ -200,15 +216,25 @@ let cancelGame = (state, reason) => {
 let formatWinnerMessage = state => {
   switch state {
   | Completed(c) => {
-      let escapedMasterName = c.master->User.first_name->String.replaceRegExp(RegExp.fromString("_", ~flags="g"), "\\_")
-      let escapedSendtag = c.winner.sendtag->String.replaceRegExp(RegExp.fromString("_", ~flags="g"), "\\_")
-      let surgeText = c.surgeAmount > 0n
-        ? "+ " ++ (c.surgeAmount->formatAmount) ++ " SEND during Send Surge"
-        : ""
+      let escapedMasterName =
+        c.master->User.first_name->String.replaceRegExp(RegExp.fromString("_", ~flags="g"), "\\_")
+      let escapedSendtag =
+        c.winner.sendtag->String.replaceRegExp(RegExp.fromString("_", ~flags="g"), "\\_")
+      let surgeText =
+        c.surgeAmount > 0n ? "+ " ++ c.surgeAmount->formatAmount ++ " SEND during Send Surge" : ""
 
-      "➡️ [‎](tg://user?id=" ++ Int.toString(c.master->User.id->Telegraf.IntId.toInt) ++ ") " ++ escapedMasterName ++ " send " ++
-      (c.amount->formatAmount) ++ " SEND to " ++ escapedSendtag ++ " [‎](tg://user?id=" ++
-      Int.toString(c.winner.userId->Telegraf.IntId.toInt) ++ ")\n\n" ++ surgeText
+      "➡️ [‎](tg://user?id=" ++
+      Int.toString(c.master->User.id->Telegraf.IntId.toInt) ++
+      ") " ++
+      escapedMasterName ++
+      " send " ++
+      c.amount->formatAmount ++
+      " SEND to " ++
+      escapedSendtag ++
+      " [‎](tg://user?id=" ++
+      Int.toString(c.winner.userId->Telegraf.IntId.toInt) ++
+      ")\n\n" ++
+      surgeText
     }
   | _ => ""
   }
