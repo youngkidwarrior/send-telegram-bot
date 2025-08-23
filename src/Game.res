@@ -101,7 +101,7 @@ let gameStateText = state => {
       let playerList = c.players->formatPlayerList
       let surgeText = c.surgeAmount > 0n ? "\n📈 Send Surge: " ++ BigInt.toString(c.surgeAmount / surgeIncrease) : ""
 
-      c.master->User.first_name ++ " is sending " ++ (c.amount->formatAmount) ++ " SEND\n" ++
+      c.master->User.first_name ++ " is sending " ++ (c.amount->formatAmount) ++ " SEND\n\n" ++
       Int.toString(playerCount) ++ " / " ++ Int.toString(c.maxPlayers) ++ " players\n\n" ++
       playerList ++ surgeText
     }
