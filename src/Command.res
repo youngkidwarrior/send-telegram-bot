@@ -55,7 +55,7 @@ let parseAmountToUnits = (s: string) => {
       switch parts[0] {
       | Some(intStr) =>
         switch BigInt.fromString(intStr) {
-        | Some(intPart) => Some(intPart * (10n ** send.decimals))
+        | Some(intPart) => Some(intPart * 10n ** send.decimals)
         | None => None
         }
       | None => None
@@ -69,36 +69,32 @@ let parseAmountToUnits = (s: string) => {
       if !intOk || !fracOk {
         None
       } else {
-        let decimalsInt =
-          send.decimals->BigInt.toString->Int.fromString->Option.getOr(18)
-        let fracLimited =
-          if fracRaw->String.length > decimalsInt {
-            fracRaw->String.slice(~start=0, ~end=decimalsInt)
-          } else {
-            fracRaw
-          }
+        let decimalsInt = send.decimals->BigInt.toString->Int.fromString->Option.getOr(18)
+        let fracLimited = if fracRaw->String.length > decimalsInt {
+          fracRaw->String.slice(~start=0, ~end=decimalsInt)
+        } else {
+          fracRaw
+        }
         let len = fracLimited->String.length
         let padZeros = decimalsInt - len
-        let fracUnits =
-          if fracLimited == "" {
-            0n
-          } else {
-            switch BigInt.fromString(fracLimited) {
-            | Some(bi) =>
-              let mulPow = 10n ** BigInt.fromInt(padZeros)
-              bi * mulPow
-            | None => 0n
-            }
+        let fracUnits = if fracLimited == "" {
+          0n
+        } else {
+          switch BigInt.fromString(fracLimited) {
+          | Some(bi) =>
+            let mulPow = 10n ** BigInt.fromInt(padZeros)
+            bi * mulPow
+          | None => 0n
           }
-        let intUnits =
-          if intStr == "" {
-            0n
-          } else {
-            switch BigInt.fromString(intStr) {
-            | Some(bi) => bi * (10n ** send.decimals)
-            | None => 0n
-            }
+        }
+        let intUnits = if intStr == "" {
+          0n
+        } else {
+          switch BigInt.fromString(intStr) {
+          | Some(bi) => bi * 10n ** send.decimals
+          | None => 0n
           }
+        }
         Some(intUnits + fracUnits)
       }
     | _ => None
@@ -113,8 +109,7 @@ let generateSendUrl = (command: sendOptions) =>
     switch parseAmountToUnits(amountStr) {
     | Some(parsed) =>
       `${confirmUrl}?idType=tag&recipient=${recipient}&amount=${parsed->BigInt.toString}&sendToken=${send.address}`
-    | None =>
-      `${baseUrl}?idType=tag&recipient=${recipient}&sendToken=${send.address}`
+    | None => `${baseUrl}?idType=tag&recipient=${recipient}&sendToken=${send.address}`
     }
   | {recipient, amount: ?None} =>
     `${baseUrl}?idType=tag&recipient=${recipient}&sendToken=${send.address}`
@@ -151,12 +146,10 @@ let parseGuessCommand = args => {
   }
 
   switch (maybeMax, maybeBaseAmount) {
-  | (None, None) =>
-    Some({maxNumber: ?Some(randomMax), baseAmount: ?Some(Game.minGuessAmount)})
+  | (None, None) => Some({maxNumber: ?Some(randomMax), baseAmount: ?Some(Game.minGuessAmount)})
   | (Some(maxNumber), None) =>
     Some({maxNumber: ?Some(maxNumber), baseAmount: ?Some(Game.minGuessAmount)})
-  | (None, Some(baseAmount)) =>
-    Some({maxNumber: ?Some(randomMax), baseAmount: ?Some(baseAmount)})
+  | (None, Some(baseAmount)) => Some({maxNumber: ?Some(randomMax), baseAmount: ?Some(baseAmount)})
   | (Some(maxNumber), Some(baseAmount)) =>
     Some({maxNumber: ?Some(maxNumber), baseAmount: ?Some(baseAmount)})
   }
@@ -176,28 +169,50 @@ let parseSendNote = args => {
   let newlineIndex = args->Array.findIndexOpt(String.includes(_, "\n"))
   let carrotIndex = args->Array.findIndexOpt(String.includes(_, ">"))
   let joinWithSpace = tokens =>
-    tokens->Array.reduce("", (acc, tok) => if acc == "" { tok } else { acc ++ " " ++ tok })
+    tokens->Array.reduce("", (acc, tok) =>
+      if acc == "" {
+        tok
+      } else {
+        acc ++ " " ++ tok
+      }
+    )
   let stripLeadingGt = s => s->String.replaceRegExp(RegExp.fromString("^[\\s>]+"), "")->String.trim
   switch (newlineIndex, carrotIndex) {
   | (None, None) => None
   | (Some(newlineIndex), Some(carrotIndex)) => {
-      let start = if newlineIndex < carrotIndex { newlineIndex } else { carrotIndex }
+      let start = if newlineIndex < carrotIndex {
+        newlineIndex
+      } else {
+        carrotIndex
+      }
       let tokens = args->Array.slice(~start)
       let joined = joinWithSpace(tokens)
       let cleaned = stripLeadingGt(joined)
-      if cleaned == "" { None } else { Some(cleaned) }
+      if cleaned == "" {
+        None
+      } else {
+        Some(cleaned)
+      }
     }
   | (Some(start), None) => {
       let tokens = args->Array.slice(~start)
       let joined = joinWithSpace(tokens)
       let cleaned = stripLeadingGt(joined)
-      if cleaned == "" { None } else { Some(cleaned) }
+      if cleaned == "" {
+        None
+      } else {
+        Some(cleaned)
+      }
     }
   | (None, Some(start)) => {
       let tokens = args->Array.slice(~start)
       let joined = joinWithSpace(tokens)
       let cleaned = stripLeadingGt(joined)
-      if cleaned == "" { None } else { Some(cleaned) }
+      if cleaned == "" {
+        None
+      } else {
+        Some(cleaned)
+      }
     }
   }
 }

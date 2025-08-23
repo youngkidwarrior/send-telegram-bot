@@ -62,13 +62,12 @@ let switchInlineButton = (~text, ~query, ~currentChat=false) => {
 // Helper functions for markup
 let inlineKeyboard = buttons => InlineKeyboard(buttons)
 
-let replyKeyboard = (~buttons, ~resize=true, ~oneTime=false, ~placeholder=?) =>
-  ReplyKeyboard({
-    buttons,
-    resize,
-    oneTime,
-    placeholder,
-  })
+let replyKeyboard = (~buttons, ~resize=true, ~oneTime=false, ~placeholder=?) => ReplyKeyboard({
+  buttons,
+  resize,
+  oneTime,
+  placeholder,
+})
 
 // Convert options to Telegram API format
 let toTelegramOptions = (options): Bindings.Telegraf.MessageOptions.t => {
@@ -83,46 +82,45 @@ let toTelegramOptions = (options): Bindings.Telegraf.MessageOptions.t => {
   let replyMarkup = switch options.replyMarkup {
   | Some(InlineKeyboard(buttons)) => {
       // Convert our buttons to Telegraf's InlineKeyboardButton format
-      let inlineKeyboard =
-        Array.map(buttons, row =>
-          Array.map(row, button => {
-            // Create a proper InlineKeyboardButton object matching the binding's type
-            let buttonObj: Bindings.Telegraf.InlineKeyboardButton.t = switch button.action {
-            | #Callback(data) => {
-                text: button.text,
-                callbackData: Some(data),
-                url: None
-              }
-            | #Url(url) => {
-                text: button.text,
-                url: Some(url),
-                callbackData: None
-              }
-            | #SwitchInlineQuery(query) => {
-                text: button.text,
-                callbackData: Some(`switch:${query}`),
-                url: None
-              }
-            | #SwitchInlineQueryCurrentChat(query) => {
-                text: button.text,
-                callbackData: Some(`switchCurrent:${query}`),
-                url: None
-              }
+      let inlineKeyboard = Array.map(buttons, row =>
+        Array.map(row, button => {
+          // Create a proper InlineKeyboardButton object matching the binding's type
+          let buttonObj: Bindings.Telegraf.InlineKeyboardButton.t = switch button.action {
+          | #Callback(data) => {
+              text: button.text,
+              callbackData: Some(data),
+              url: None,
             }
-            buttonObj
-          })
-        )
+          | #Url(url) => {
+              text: button.text,
+              url: Some(url),
+              callbackData: None,
+            }
+          | #SwitchInlineQuery(query) => {
+              text: button.text,
+              callbackData: Some(`switch:${query}`),
+              url: None,
+            }
+          | #SwitchInlineQueryCurrentChat(query) => {
+              text: button.text,
+              callbackData: Some(`switchCurrent:${query}`),
+              url: None,
+            }
+          }
+          buttonObj
+        })
+      )
 
       // Create the ReplyMarkup object with inlineKeyboard
       let markup: Bindings.Telegraf.ReplyMarkup.t = {
-        inlineKeyboard: inlineKeyboard
+        inlineKeyboard: inlineKeyboard,
       }
       markup
     }
   | Some(ReplyKeyboard(_)) | Some(RemoveKeyboard) | Some(ForceReply(_)) | None => {
       // For unsupported markup types, create an empty inline keyboard
       let markup: Bindings.Telegraf.ReplyMarkup.t = {
-        inlineKeyboard: []
+        inlineKeyboard: [],
       }
       markup
     }
@@ -130,8 +128,8 @@ let toTelegramOptions = (options): Bindings.Telegraf.MessageOptions.t => {
 
   // Construct and return the properly typed MessageOptions object
   {
-    replyMarkup: replyMarkup,
-    parseMode: parseMode
+    replyMarkup,
+    parseMode,
   }
 }
 

@@ -112,7 +112,13 @@ module Telegraf = {
     external deleteMessage: (t, chatId, messageId) => promise<bool> = "deleteMessage"
     @send
     external deleteMessages: (t, chatId, array<messageId>) => promise<bool> = "deleteMessages"
-    let editMessageTextL: (t, ~chatId: chatId, ~messageId: messageId, ~text: string, ~options: MessageOptions.t=?) => promise<Message.t>
+    let editMessageTextL: (
+      t,
+      ~chatId: chatId,
+      ~messageId: messageId,
+      ~text: string,
+      ~options: MessageOptions.t=?,
+    ) => promise<Message.t>
     @send
     external editMessageText: (
       t,
@@ -149,7 +155,8 @@ module Telegraf = {
       string,
       ~options: MessageOptions.t=?,
     ) => promise<Message.t> = "editMessageText"
-    let editMessageTextL = (t, ~chatId, ~messageId, ~text, ~options=?) => editMessageText(t, chatId, messageId, None, text, ~options=?options)
+    let editMessageTextL = (t, ~chatId, ~messageId, ~text, ~options=?) =>
+      editMessageText(t, chatId, messageId, None, text, ~options?)
     @send
     external sendMessage: (t, chatId, string, ~options: MessageOptions.t=?) => promise<Message.t> =
       "sendMessage"
@@ -205,7 +212,12 @@ module Telegraf = {
     @get external callbackQuery: t => option<CallbackQuery.t> = "callbackQuery"
     @get external bot: t => option<Bot.t> = "bot"
     @send external reply: (t, string, ~options: MessageOptions.t=?) => promise<Message.t> = "reply"
-    @send external answerCbQuery: (t, option<string>, option<AnswerCallbackQueryOptions.t>) => promise<bool> = "answerCbQuery"
+    @send
+    external answerCbQuery: (
+      t,
+      option<string>,
+      option<AnswerCallbackQueryOptions.t>,
+    ) => promise<bool> = "answerCbQuery"
   }
 
   // Launch options types
@@ -217,9 +229,7 @@ module Telegraf = {
       }
     }
 
-    type t = {
-      webhook: option<Webhook.t>,
-    }
+    type t = {webhook: option<Webhook.t>}
   }
 
   // Main module exports
