@@ -189,7 +189,7 @@ module AdminUtils = {
 let handleGuessCommand = async (ctx: Telegraf.Context.t) => {
   let chatId = ctx.chat->Option.mapOr(Telegraf.IntId.unsafeOfInt(0), c => c.id)
   let state = games->Map.get(chatId)
-  let surge = surges->Map.get(chatId)->Option.getOr({Game.multiplier: 0, updatedAt: 0.})
+  let _surge = surges->Map.get(chatId)->Option.getOr({Game.multiplier: 0, updatedAt: 0.})
   switch state {
   | Some(Game.Collecting(_) as s) => {
       let messageText = Game.gameStateText(s)
@@ -216,14 +216,43 @@ let handleGuessCommand = async (ctx: Telegraf.Context.t) => {
       Ok()
     }
   | _ => {
-      let (chatId, newState) = switch ctx.message {
-      | Some(m) =>
-        switch m->Message.from {
-        | Some(from) =>
-          Game.createGame(chatId, from, ~maxPlayers=10, ~baseAmount=Game.minGuessAmount, ~surge)
-        | None => (chatId, Game.Cancelled(Game.Error("Missing user information")))
+      // Parse /guess options like we do for /send using Command.fromContext
+      let parsed = Command.fromContext(ctx)
+      let (chatId, newState) = switch (parsed, ctx.message, ctx.from) {
+      | (Ok(Command.Guess({?maxNumber, ?baseAmount})), Some(_m), Some(from)) => {
+          // Compute current minimum including surge
+          let surgeAmount = switch surges->Map.get(chatId) {
+          | Some(s) if Game.isSurgeActive(s) => BigInt.fromInt(s.multiplier) * Game.surgeIncrease
+          | _ => 0n
+          }
+          let currentMin = Game.minGuessAmount + surgeAmount
+
+          // Decide final base amount and whether to apply surge
+          let (finalBase, finalSurge) = switch baseAmount {
+          | Some(requested) =>
+            if requested >= currentMin {
+              // Treat as explicit amount: don't apply surge
+              (requested, None)
+            } else {
+              // Too low: enforce current minimum by using min base and applying surge
+              (Game.minGuessAmount, surges->Map.get(chatId))
+            }
+          | None => // No explicit amount: use min base and apply surge if active
+            (Game.minGuessAmount, surges->Map.get(chatId))
+          }
+
+          let maxPlayers = switch maxNumber {
+          | Some(n) => n
+          | None => {
+              let range = Game.maxPlayers - Game.minPlayers + 1
+              Game.minPlayers + Int.fromFloat(Math.floor(Math.random() *. Float.fromInt(range)))
+            }
+          }
+
+          Game.createGame(chatId, from, ~maxPlayers, ~baseAmount=finalBase, ~surge=?finalSurge)
         }
-      | None => (chatId, Game.Cancelled(Game.Error("Missing message information")))
+      | (_, Some(_m), None) => (chatId, Game.Cancelled(Game.Error("Missing user information")))
+      | _ => (chatId, Game.Cancelled(Game.Error("Missing message information")))
       }
       games->Map.set(chatId, newState)
       switch newState {
@@ -267,8 +296,9 @@ let processPendingJoins = async chatId => {
   let pendingJoin = pendingJoins->Map.get(chatId)
   let gameState = games->Map.get(chatId)
   switch (pendingJoin, gameState) {
-  | (Some({players}), Some(Game.Collecting(_) as state)) => {
+  | (Some({players}), Some(Game.Collecting(c) as state)) => {
       let _ = pendingJoins->Map.delete(chatId)
+      let prevMessageId = c.messageId
       let uniquePlayers: array<Game.player> = players->Array.reduce([], (
         acc: array<Game.player>,
         player: Game.player,
@@ -329,6 +359,8 @@ let processPendingJoins = async chatId => {
           Ok()
         }
       | Game.Completed(c) => {
+          // Delete the old collecting message so the /join button disappears (parity with TS)
+          enqueueDelete({chatId, messageId: prevMessageId})
           let winnerMessage = Game.formatWinnerMessage(finalState)
           let sendtag = c.winner.sendtag->String.replace("/", "")
           let command: Command.sendOptions = {
@@ -340,7 +372,8 @@ let processPendingJoins = async chatId => {
             ...MessageFormat.defaultOptions,
             format: #Markdown,
             replyMarkup: Some(
-              MessageFormat.inlineKeyboard([[MessageFormat.button(~text="Send", ~url)]]),
+              // Use '/send' label for parity with TS and the rest of the bot
+              MessageFormat.inlineKeyboard([[MessageFormat.button(~text="/send", ~url)]]),
             ),
           }
           let telegramOptions = MessageFormat.toTelegramOptions(options)

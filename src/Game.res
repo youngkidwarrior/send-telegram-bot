@@ -115,10 +115,11 @@ let gameStateText = state => {
       surgeText
     }
   | Completed(c) =>
-    "🎉 Winner\n# " ++
+    // MarkdownV2-safe header: escape leading '#' and trailing '!'
+    "🎉 Winner\n\\# " ++
     Int.toString(c.winningNumber) ++
     " out of " ++
-    Int.toString(c.players->Array.length) ++ "!"
+    Int.toString(c.players->Array.length) ++ "\\!"
   | Cancelled(reason) =>
     switch reason {
     | AdminCancelled(user) => `🎲 Game killed by Admin ${user->User.first_name}`
@@ -141,10 +142,9 @@ let createGame = (
   let winningNumber = {
     // Convert maxPlayers to float for the calculation
     let maxPlayersFloat = maxPlayers->Int.toFloat
-    // Do the float calculation
-    let result = Math.random() *. maxPlayersFloat -. 0.001 +. 1.0
-    // Floor the result and convert back to int
-    result->Math.floor->Int.fromFloat
+    // Random integer in [1, maxPlayers]
+    let result = Math.random() *. maxPlayersFloat
+    result->Math.floor->Int.fromFloat + 1
   }
 
   // Calculate amount with surge if provided
@@ -216,12 +216,11 @@ let cancelGame = (state, reason) => {
 let formatWinnerMessage = state => {
   switch state {
   | Completed(c) => {
-      let escapedMasterName =
-        c.master->User.first_name->String.replaceRegExp(RegExp.fromString("_", ~flags="g"), "\\_")
-      let escapedSendtag =
-        c.winner.sendtag->String.replaceRegExp(RegExp.fromString("_", ~flags="g"), "\\_")
+      // Escape dynamic text for MarkdownV2 while preserving explicit link markup
+      let escapedMasterName = MessageFormat.escapeMarkdown(c.master->User.first_name)
+      let escapedSendtag = MessageFormat.escapeMarkdown(c.winner.sendtag)
       let surgeText =
-        c.surgeAmount > 0n ? "+ " ++ c.surgeAmount->formatAmount ++ " SEND during Send Surge" : ""
+        c.surgeAmount > 0n ? "\\+ " ++ c.surgeAmount->formatAmount ++ " SEND during Send Surge" : ""
 
       "➡️ [‎](tg://user?id=" ++
       Int.toString(c.master->User.id->Telegraf.IntId.toInt) ++
