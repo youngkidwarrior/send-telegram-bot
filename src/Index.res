@@ -45,67 +45,72 @@ let rec withRetry = async (fn, ~maxRetries=3, ~initialDelay=1000, ~attempt=0) =>
   }
 }
 
-// Helpers to generate MarkdownV2 text for /send, modeled after the TS bot's generateSendText
-let mdEscape = MessageFormat.escapeMarkdown
-
+// Helpers to generate MarkdownV2 text for /send using typed Markdown builder
 let repeat = (ch: string, count: int) => {
-  let rec aux = (i, acc) =>
-    if i <= 0 {
-      acc
-    } else {
-      aux(i - 1, acc ++ ch)
-    }
+  let rec aux = (i, acc) => if i <= 0 {acc} else {aux(i - 1, acc ++ ch)}
   aux(count, "")
 }
 
-let buildSendText = (
+let buildSendMd = (
   ctx: Telegraf.Context.t,
-  recipientDisplay: string,
-  amountUnitsOpt: option<bigint>,
+  recipient: Sendtag.t,
+  amountOpt: option<Amount.verified>,
   noteOpt: option<string>,
-): string => {
+): Markdown.t => {
   // Sender name and recipient
   let senderName = ctx.from->Option.mapOr("", u => u->Telegraf.User.first_name)
-  let markdownSender = senderName->mdEscape
-  let markdownRecipient = recipientDisplay->mdEscape
+  let mdSender = Markdown.text(senderName)
+  let mdRecipient = Markdown.text(Sendtag.toDisplay(recipient))
   // Determine header content
-  let headerCore = switch amountUnitsOpt {
-  | Some(units) if units > 0n =>
-    `*${Command.formatAmount(units)} ${Command.send.symbol} to ${markdownRecipient}*`
-  | _ => `*${markdownSender} sending to ${markdownRecipient}*`
-  }
+  let headerCore =
+    switch amountOpt {
+    | Some(a) => {
+        let amtMd = Amount.displayToMd(a.display)
+        Markdown.bold(
+          Markdown.concat([
+            amtMd,
+            Markdown.text(" " ++ Command.send.symbol ++ " to "),
+            mdRecipient,
+          ]),
+        )
+      }
+    | None =>
+      Markdown.bold(
+        Markdown.concat([mdSender, Markdown.text(" sending to "), mdRecipient]),
+      )
+    }
   // Optional note
-  let noteText = switch noteOpt {
-  | None => ""
-  | Some(n) => {
-      // No special wrapping; preserve user spacing and escape for MarkdownV2
-      let escaped = n->mdEscape
-      // Render with divider line; keep gutter outside of code formatting to avoid color mismatch
-      "\n┃ ━━━━━━━━━━\n┃ " ++ escaped
+  let noteMd =
+    switch noteOpt {
+    | None => Markdown.text("")
+    | Some(n) =>
+      Markdown.concat([
+        Markdown.newline,
+        Markdown.divider,
+        Markdown.newline,
+        Markdown.text(n),
+      ])
     }
-  }
   // Optional reply mention (if replying to a user)
-  let replyText = switch ctx.message
-  ->Option.flatMap(Message.replyToMessage(_))
-  ->Option.flatMap(m => m->Message.from) {
-  | Some(u) =>
-    "[‎](tg://user?id=" ++ u->Telegraf.User.id->Telegraf.IntId.toInt->Int.toString ++ ")"
-  | None => ""
-  }
-  // Build final text with consistent MarkdownV2 (no stray backticks around the gutter)
-  let header = "\n┃ " ++ headerCore
-  let senderLine = switch amountUnitsOpt {
-  | Some(units) if units > 0n =>
-    let padLen = 28 - String.length(markdownSender) - 8 /* "sent by " */
-    let padding = if padLen > 0 {
-      repeat(" ", padLen)
-    } else {
-      ""
+  let replyMd =
+    switch ctx.message
+    ->Option.flatMap(Message.replyToMessage(_))
+    ->Option.flatMap(m => m->Message.from) {
+    | Some(u) => Markdown.mentionUserId(u->Telegraf.User.id->Telegraf.IntId.toInt)
+    | None => Markdown.text("")
     }
-    "\n┃ " ++ padding ++ "`sent by " ++ markdownSender ++ "`"
-  | _ => ""
-  }
-  header ++ noteText ++ senderLine ++ replyText
+  // Compute sender padding only when amount shown
+  let senderPadMd =
+    switch amountOpt {
+    | Some(_a) => {
+        let senderEscaped = MessageFormat.escapeMarkdown(senderName)
+        let padLen = 28 - String.length(senderEscaped) - 8
+        let effectivePad = if padLen > 0 {padLen} else {0}
+        Markdown.senderLine(~padding=effectivePad, ~senderName=mdSender)
+      }
+    | None => Markdown.text("")
+    }
+  Markdown.concat([Markdown.codeHeaderPrefix, headerCore, noteMd, senderPadMd, replyMd])
 }
 
 // Delete queue
@@ -166,6 +171,17 @@ let enqueueDelete = (task: deleteTask) => {
   }
 }
 
+// Helper: extract/clean sendtag from user name (mirror handleJoinGame 401–409)
+let extractCleanSendtagFromUser = (user: Telegraf.User.t): option<string> => {
+  let nameParts = user->Telegraf.User.first_name->String.split("/")
+  let rawSendtag = nameParts->Array.get(1)->Option.getOr("")
+  let cleanSendtag =
+    rawSendtag
+    ->String.replaceRegExp(RegExp.fromString("[^a-zA-Z0-9_]", ~flags="gu"), "")
+    ->String.trim
+  if cleanSendtag == "" {None} else {Some(cleanSendtag)}
+}
+
 module AdminUtils = {
   type adminCacheValue = {ids: array<Telegraf.userId>, timestamp: float}
   type adminCache = Map.t<Telegraf.chatId, adminCacheValue>
@@ -188,17 +204,39 @@ module AdminUtils = {
 
 let handleGuessCommand = async (ctx: Telegraf.Context.t) => {
   let chatId = ctx.chat->Option.mapOr(Telegraf.IntId.unsafeOfInt(0), c => c.id)
-  let state = games->Map.get(chatId)
-  let _surge = surges->Map.get(chatId)->Option.getOr({Game.multiplier: 0, updatedAt: 0.})
-  switch state {
+  // Global sendtag enforcement (mirror handleJoinGame 401–409 and /send private reply 535–543)
+  let hasSendtag = switch ctx.from {
+  | Some(u) => extractCleanSendtagFromUser(u)->Option.isSome
+  | None => false
+  }
+  if !hasSendtag {
+    let isPrivate = ctx.chat->Option.mapOr(false, c => c.id->Telegraf.IntId.toInt > 0)
+    if isPrivate {
+      let _ = await ctx->Context.reply("Add sendtag to your name!", ~options=defaultTelegramOptions)
+    } else {
+      ()
+    }
+    // Queue deletion of original command (mirror 212–215 and 280–283)
+    switch ctx.message->Option.flatMap(Message.messageId) {
+    | Some(msgId) => enqueueDelete({chatId, messageId: msgId})
+    | None => ()
+    }
+    Ok()
+  } else {
+    let state = games->Map.get(chatId)
+    let _surge = surges->Map.get(chatId)->Option.getOr({Game.multiplier: 0, updatedAt: 0.})
+    switch state {
   | Some(Game.Collecting(_) as s) => {
       let messageText = Game.gameStateText(s)
-      let opts: Telegraf.MessageOptions.t = {
-        replyMarkup: {
-          inlineKeyboard: [[{text: "/join", callbackData: Some("join_game"), url: None}]],
-        },
-        parseMode: None,
+      // Use MarkdownV2 options (mirror winner opts 371–379)
+      let options = {
+        ...MessageFormat.defaultOptions,
+        format: #Markdown,
+        replyMarkup: Some(
+          MessageFormat.inlineKeyboard([[MessageFormat.callbackButton(~text="/join", ~data="join_game")]]),
+        ),
       }
+      let opts: Telegraf.MessageOptions.t = MessageFormat.toTelegramOptions(options)
       let messageId = switch s {
       | Game.Collecting(c) => c.messageId
       | _ => Telegraf.IntId.unsafeOfInt(0)
@@ -221,25 +259,24 @@ let handleGuessCommand = async (ctx: Telegraf.Context.t) => {
       let (chatId, newState) = switch (parsed, ctx.message, ctx.from) {
       | (Ok(Command.Guess({?maxNumber, ?baseAmount})), Some(_m), Some(from)) => {
           // Compute current minimum including surge
-          let surgeAmount = switch surges->Map.get(chatId) {
+          let prevSurge = surges->Map.get(chatId)
+          let surgeAmount = switch prevSurge {
           | Some(s) if Game.isSurgeActive(s) => BigInt.fromInt(s.multiplier) * Game.surgeIncrease
           | _ => 0n
           }
           let currentMin = Game.minGuessAmount + surgeAmount
 
           // Decide final base amount and whether to apply surge
-          let (finalBase, finalSurge) = switch baseAmount {
-          | Some(requested) =>
-            if requested >= currentMin {
-              // Treat as explicit amount: don't apply surge
-              (requested, None)
-            } else {
-              // Too low: enforce current minimum by using min base and applying surge
-              (Game.minGuessAmount, surges->Map.get(chatId))
-            }
-          | None => // No explicit amount: use min base and apply surge if active
-            (Game.minGuessAmount, surges->Map.get(chatId))
+          let applySurge = switch baseAmount {
+          | Some(requested) => requested < currentMin
+          | None => true
           }
+          let finalBase = switch baseAmount {
+          | Some(requested) when requested >= currentMin => requested
+          | _ => Game.minGuessAmount
+          }
+          // Pass the previous surge state to this game (so first guess after cooldown is not boosted)
+          let finalSurge = if applySurge {prevSurge} else {None}
 
           let maxPlayers = switch maxNumber {
           | Some(n) => n
@@ -249,7 +286,17 @@ let handleGuessCommand = async (ctx: Telegraf.Context.t) => {
             }
           }
 
-          Game.createGame(chatId, from, ~maxPlayers, ~baseAmount=finalBase, ~surge=?finalSurge)
+          let result = Game.createGame(chatId, from, ~maxPlayers, ~baseAmount=finalBase, ~surge=?finalSurge)
+          // After creating the game, update surge state for future guesses (increment or reset)
+          if applySurge {
+            switch prevSurge {
+            | Some(s) when Game.isSurgeActive(s) => surges->Map.set(chatId, {Game.multiplier: s.multiplier + 1, updatedAt: Date.now()})
+            | _ => surges->Map.set(chatId, {Game.multiplier: 1, updatedAt: Date.now()})
+            }
+          } else {
+            ()
+          }
+          result
         }
       | (_, Some(_m), None) => (chatId, Game.Cancelled(Game.Error("Missing user information")))
       | _ => (chatId, Game.Cancelled(Game.Error("Missing message information")))
@@ -258,12 +305,14 @@ let handleGuessCommand = async (ctx: Telegraf.Context.t) => {
       switch newState {
       | Game.Collecting(_) => {
           let messageText = Game.gameStateText(newState)
-          let opts: Telegraf.MessageOptions.t = {
-            replyMarkup: {
-              inlineKeyboard: [[{text: "/join", callbackData: Some("join_game"), url: None}]],
-            },
-            parseMode: None,
+          let options = {
+            ...MessageFormat.defaultOptions,
+            format: #Markdown,
+            replyMarkup: Some(
+              MessageFormat.inlineKeyboard([[MessageFormat.callbackButton(~text="/join", ~data="join_game")]]),
+            ),
           }
+          let opts: Telegraf.MessageOptions.t = MessageFormat.toTelegramOptions(options)
           switch await withRetry(() => ctx->Context.reply(messageText, ~options=opts)) {
           | Ok(message) => {
               switch message->Message.messageId {
@@ -287,6 +336,7 @@ let handleGuessCommand = async (ctx: Telegraf.Context.t) => {
           }
         }
       | _ => Error("Failed to create game")
+        }
       }
     }
   }
@@ -342,18 +392,20 @@ let processPendingJoins = async chatId => {
       | Game.Collecting(c) => {
           let messageText = Game.gameStateText(finalState)
           Console.log(`[/edit collect] prefix: ${messageText->String.slice(~start=0, ~end=120)}`)
-          let options: Telegraf.MessageOptions.t = {
-            replyMarkup: {
-              inlineKeyboard: [[{text: "/join", callbackData: Some("join_game"), url: None}]],
-            },
-            parseMode: None,
+          let options = {
+            ...MessageFormat.defaultOptions,
+            format: #Markdown,
+            replyMarkup: Some(
+              MessageFormat.inlineKeyboard([[MessageFormat.callbackButton(~text="/join", ~data="join_game")]]),
+            ),
           }
+          let telegramOptions: Telegraf.MessageOptions.t = MessageFormat.toTelegramOptions(options)
           let _ = await withRetry(() =>
             Telegraf.telegram(telegraf)->Telegram.editMessageTextL(
               ~chatId,
               ~messageId=c.messageId,
               ~text=messageText,
-              ~options,
+              ~options=telegramOptions,
             )
           )
           Ok()
@@ -463,64 +515,56 @@ let setupBot = () => {
     Console.log(`[/guess] raw: ${rawText}`)
     let _ = await handleGuessCommand(ctx)
   })
-  ->ignore
+  ->ignore;
   telegraf
   ->Telegraf.command("send", async ctx => {
-    // Log raw incoming text
-    let rawText = ctx.message->Option.flatMap(Message.text)->Option.getOr("")
-    Console.log(`[/send] raw: ${rawText}`)
-    switch Command.fromContext(ctx) {
+    // Global sendtag enforcement (mirror handleJoinGame 401–409)
+    let cleanedTagOpt = ctx.from->Option.flatMap(extractCleanSendtagFromUser)
+    let hasSendtag = cleanedTagOpt->Option.isSome
+    let hasSendtag = hasSendtag
+    if !hasSendtag {
+      let isPrivate = ctx.chat->Option.mapOr(false, c => c.id->Telegraf.IntId.toInt > 0)
+      if isPrivate {
+        let _ = await ctx->Context.reply("Add sendtag to your name!", ~options=defaultTelegramOptions)
+      } else {
+        ()
+      }
+      // Always queue deletion of original command
+      let chatId2 = ctx.chat->Option.mapOr(Telegraf.IntId.unsafeOfInt(0), c => c.id)
+      switch ctx.message->Option.flatMap(Message.messageId) {
+      | Some(msgId) => enqueueDelete({chatId: chatId2, messageId: msgId})
+      | None => ()
+      }
+    } else {
+      switch Command.fromContext(ctx) {
     | Ok(Command.Send({recipient, ?amount, ?note})) => {
-        let amountStr = switch amount {
-        | Some(a) => a.display
-        | None => "(none)"
-        }
-        let noteStr = switch note {
-        | Some(_) => "(provided)"
-        | None => "(none)"
-        }
-        Console.log(
-          `[/send] parsed -> recipient=${recipient->Sendtag.toParam}, amount=${amountStr}, note=${noteStr}`,
-        )
         let command: Command.sendOptions = {recipient, ?amount, ?note}
         let url = Command.generateSendUrl(command)
-        Console.log(`[/send] generated url: ${url}`)
-        let recipientDisplay = Sendtag.toDisplay(recipient)
-        // Build display text exactly like the TS bot (MarkdownV2 styled)
-        let unitsOpt = switch amount {
-        | Some(a) => Some(a.units)
-        | None => None
-        }
-        let messageTextBase = buildSendText(ctx, recipientDisplay, unitsOpt, note)
-        // Build a hidden profile link (so OG preview shows)
+        // Build Markdown message using typed builder
+        let md = buildSendMd(ctx, recipient, amount, note)
+        let messageTextBase = Markdown.render(md)
+        // Hidden profile link to trigger OG preview
         let profileUrl = `${Command.baseUrl}${recipient->Sendtag.toParam}`
         let hiddenLink = "[‎](" ++ profileUrl ++ ")"
-        // Compose one message with styled text and hidden link; include inline button when amount is valid
         let messageText = messageTextBase ++ "\n\n" ++ hiddenLink
-        let replyMarkupOpt = switch unitsOpt {
-        | Some(_) =>
-          Some(MessageFormat.inlineKeyboard([[MessageFormat.button(~text="/send", ~url)]]))
-        | None => None
-        }
+        // Always include inline '/send' button linking to generated URL
+        let replyMarkup = MessageFormat.inlineKeyboard([
+          [MessageFormat.button(~text="/send", ~url)],
+        ])
         let options = {
           ...MessageFormat.defaultOptions,
           format: #Markdown,
-          replyMarkup: replyMarkupOpt,
+          replyMarkup: Some(replyMarkup),
         }
         let telegramOptions = MessageFormat.toTelegramOptions(options)
         switch await withRetry(() => ctx->Context.reply(messageText, ~options=telegramOptions)) {
-        | Ok(_) => Console.log("[/send] replied with link successfully")
+        | Ok(_) => ()
         | Error(e) => Console.error2("[/send] failed to reply:", e)
         }
         let chatId2 = ctx.chat->Option.mapOr(Telegraf.IntId.unsafeOfInt(0), c => c.id)
         switch ctx.message->Option.flatMap(Message.messageId) {
-        | Some(msgId) => {
-            Console.log(
-              `[/send] queue delete original message: ${msgId->Telegraf.IntId.toInt->Int.toString}`,
-            )
-            enqueueDelete({chatId: chatId2, messageId: msgId})
-          }
-        | None => Console.log("[/send] no original messageId to delete")
+        | Some(msgId) => enqueueDelete({chatId: chatId2, messageId: msgId})
+        | None => ()
         }
       }
     | Ok(other) => {
@@ -556,14 +600,33 @@ let setupBot = () => {
         }
       }
     }
+    }
   })
-  ->ignore
+  ->ignore;
   telegraf
   ->Telegraf.command("kill", async ctx => {
     let rawText = ctx.message->Option.flatMap(Message.text)->Option.getOr("")
     Console.log(`[/kill] raw: ${rawText}`)
     let chatId = ctx.chat->Option.mapOr(Telegraf.IntId.unsafeOfInt(0), c => c.id)
-    let isAdmin = switch ctx.from {
+    // Global sendtag enforcement pre-check
+    let hasSendtag = switch ctx.from {
+    | Some(u) => extractCleanSendtagFromUser(u)->Option.isSome
+    | None => false
+    }
+    if !hasSendtag {
+      let isPrivate = ctx.chat->Option.mapOr(false, c => c.id->Telegraf.IntId.toInt > 0)
+      if isPrivate {
+        let _ = await ctx->Context.reply("Add sendtag to your name!", ~options=defaultTelegramOptions)
+      } else {
+        ()
+      }
+      // Queue deletion of original command for consistency
+      switch ctx.message->Option.flatMap(Message.messageId) {
+      | Some(msgId) => enqueueDelete({chatId, messageId: msgId})
+      | None => ()
+      }
+    } else {
+      let isAdmin = switch ctx.from {
     | Some(from) =>
       (await AdminUtils.getAdminIds(ctx, chatId))->Array.includes(from->Telegraf.User.id)
     | None => false
@@ -578,6 +641,11 @@ let setupBot = () => {
         )
       } else {
         ()
+      }
+      // Enqueue deletion of original /kill command
+      switch ctx.message->Option.flatMap(Message.messageId) {
+      | Some(msgId) => enqueueDelete({chatId, messageId: msgId})
+      | None => ()
       }
     } else {
       switch games->Map.get(chatId) {
@@ -600,6 +668,11 @@ let setupBot = () => {
               ~options=defaultTelegramOptions,
             )
           )
+          // Enqueue deletion of original /kill command
+          switch ctx.message->Option.flatMap(Message.messageId) {
+          | Some(msgId) => enqueueDelete({chatId, messageId: msgId})
+          | None => ()
+          }
         }
       | _ => {
           let isPrivate = ctx.chat->Option.mapOr(false, c => c.id->Telegraf.IntId.toInt > 0)
@@ -611,19 +684,48 @@ let setupBot = () => {
           } else {
             ()
           }
+          // Enqueue deletion of original /kill command
+          switch ctx.message->Option.flatMap(Message.messageId) {
+          | Some(msgId) => enqueueDelete({chatId, messageId: msgId})
+          | None => ()
+          }
         }
       }
     }
+  }
   })
-  ->ignore
+  ->ignore;
   telegraf
   ->Telegraf.command("help", async ctx => {
-    // Match TS help text and reply in all chats
-    let helpText = "\n*SendBot* only works if your sendtag is in your name\n\n*/send*\nSend SEND tokens\n\`/send /vic 30 SEND\`\n\n*Send with note*\n\`/send /vic 30 > Hello!\`\n\n*Send as reply*\n\`/send 30 > Hello!\`\n\n*Games*\n• /guess \\- Random slots, 50 SEND minimum\n• /guess 50 \\- Random slots, 50 SEND prize\n• /guess 10 50 \\- 10 slots, 50 SEND prize\n• /kill \\- End your game\n\n*Send Surge* 1 minute cooldown\n\`/guess \\- 50 SEND minimum\n/guess \\- 100 SEND minimum\n/guess \\- 150 SEND minimum\`"
+    // Dynamic help text using Game constants
+    let baseMin = Game.minGuessAmount
+    let inc = Game.surgeIncrease
+    let min1 = Game.formatAmount(baseMin)
+    let min2 = Game.formatAmount(baseMin + inc)
+    let min3 = Game.formatAmount(baseMin + inc + inc)
+    let cooldownMin = Int.toString(Game.surgeCooldown / 60000)
+    let helpText =
+      "\n*SendBot* only works if your sendtag is in your name\n\n" ++
+      "*/send*\n" ++
+      "Send SEND tokens\n" ++
+      "\`/send /vic 30 SEND\`\n\n" ++
+      "*Send with note*\n" ++
+      "\`/send /vic 30 > Hello!\`\n\n" ++
+      "*Send as reply*\n" ++
+      "\`/send 30 > Hello!\`\n\n" ++
+      "*Games*\n" ++
+      "• /guess \\- Random slots, " ++ min1 ++ " SEND minimum\n" ++
+      "• /guess " ++ min1 ++ " \\- Random slots, " ++ min1 ++ " SEND prize\n" ++
+      "• /guess 10 " ++ min1 ++ " \\- 10 slots, " ++ min1 ++ " SEND prize\n" ++
+      "• /kill \\- End your game\n\n" ++
+      "*Send Surge* " ++ cooldownMin ++ " minute cooldown\n" ++
+      "\`/guess \\- " ++ min1 ++ " SEND minimum\n" ++
+      "/guess \\- " ++ min2 ++ " SEND minimum\n" ++
+      "/guess \\- " ++ min3 ++ " SEND minimum\`"
     let options = {...MessageFormat.defaultOptions, format: #Markdown}
     let _ = await ctx->Context.reply(helpText, ~options=MessageFormat.toTelegramOptions(options))
   })
-  ->ignore
+  ->ignore;
   telegraf
   ->Telegraf.command("start", async ctx => {
     let startText = "\n👋 Welcome to the Send Bot!\n\nThis bot allows you to play guessing games with SEND tokens and send tokens to other users.\n\nUse /help to see available commands.\n"
@@ -639,17 +741,16 @@ let setupBot = () => {
   ->Telegraf.action("join_game", async ctx => {
     switch ctx.callbackQuery {
     | Some(q) => {
-        Console.log("[/join] join_game tapped")
         let _ = await handleJoinGame(ctx, q)
       }
     | None => Console.warn("[/join] no callbackQuery present")
     }
   })
-  ->ignore
+  ->ignore;
 }
 
 setupBot()
-
+;
 switch Process.env->Dict.get("DOMAIN") {
 | Some(domain) => {
     let port = Process.env->Dict.get("PORT")->Option.flatMap(Int.fromString(_))->Option.getOr(3000)
@@ -658,7 +759,7 @@ switch Process.env->Dict.get("DOMAIN") {
   }
 | None => telegraf->Telegraf.launch->ignore
 }
-
+;
 Process.onSIGINT(() => {
   Console.log("Bot is shutting down")
   let _ = telegraf->stop
