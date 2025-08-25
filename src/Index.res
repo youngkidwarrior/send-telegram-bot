@@ -362,19 +362,23 @@ let processPendingJoins = async chatId => {
           // Delete the old collecting message so the /join button disappears (parity with TS)
           enqueueDelete({chatId, messageId: prevMessageId})
           let winnerMessage = Game.formatWinnerMessage(finalState)
-          let sendtag = c.winner.sendtag->String.replace("/", "")
-          let command: Command.sendOptions = {
-            recipient: sendtag,
-            amount: ?Some(c.amount->BigInt.toString),
+          let sendtagStr = c.winner.sendtag->String.replace("/", "")
+          let replyMarkupOpt = switch Sendtag.parse(sendtagStr) {
+          | Some(recipient) => {
+              let amountVerified: Amount.verified = {
+                units: c.amount,
+                display: Amount.formatUnits(c.amount),
+              }
+              let command: Command.sendOptions = {recipient, amount: ?Some(amountVerified)}
+              let url = Command.generateSendUrl(command)
+              Some(MessageFormat.inlineKeyboard([[MessageFormat.button(~text="/send", ~url)]]))
+            }
+          | None => None
           }
-          let url = Command.generateSendUrl(command)
           let options = {
             ...MessageFormat.defaultOptions,
             format: #Markdown,
-            replyMarkup: Some(
-              // Use '/send' label for parity with TS and the rest of the bot
-              MessageFormat.inlineKeyboard([[MessageFormat.button(~text="/send", ~url)]]),
-            ),
+            replyMarkup: replyMarkupOpt,
           }
           let telegramOptions = MessageFormat.toTelegramOptions(options)
           let _ = await withRetry(() =>
@@ -468,7 +472,7 @@ let setupBot = () => {
     switch Command.fromContext(ctx) {
     | Ok(Command.Send({recipient, ?amount, ?note})) => {
         let amountStr = switch amount {
-        | Some(a) => a
+        | Some(a) => a.display
         | None => "(none)"
         }
         let noteStr = switch note {
@@ -476,24 +480,20 @@ let setupBot = () => {
         | None => "(none)"
         }
         Console.log(
-          `[/send] parsed -> recipient=${recipient}, amount=${amountStr}, note=${noteStr}`,
+          `[/send] parsed -> recipient=${recipient->Sendtag.toParam}, amount=${amountStr}, note=${noteStr}`,
         )
         let command: Command.sendOptions = {recipient, ?amount, ?note}
         let url = Command.generateSendUrl(command)
         Console.log(`[/send] generated url: ${url}`)
-        let recipientDisplay = recipient->String.startsWith("/") ? recipient : `/${recipient}`
+        let recipientDisplay = Sendtag.toDisplay(recipient)
         // Build display text exactly like the TS bot (MarkdownV2 styled)
         let unitsOpt = switch amount {
-        | Some(a) => Command.parseAmountToUnits(a)
+        | Some(a) => Some(a.units)
         | None => None
-        }
-        let unitsStr = switch unitsOpt {
-        | Some(u) => u->BigInt.toString
-        | None => "None"
         }
         let messageTextBase = buildSendText(ctx, recipientDisplay, unitsOpt, note)
         // Build a hidden profile link (so OG preview shows)
-        let profileUrl = `${Command.baseUrl}${recipient}`
+        let profileUrl = `${Command.baseUrl}${recipient->Sendtag.toParam}`
         let hiddenLink = "[‎](" ++ profileUrl ++ ")"
         // Compose one message with styled text and hidden link; include inline button when amount is valid
         let messageText = messageTextBase ++ "\n\n" ++ hiddenLink
