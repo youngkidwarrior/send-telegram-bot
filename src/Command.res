@@ -15,8 +15,8 @@ type guessOptions = {
 
 // Send command options
 type sendOptions = {
-  recipient: string,
-  amount?: string,
+  recipient: Sendtag.t,
+  amount?: Amount.verified,
   note?: string,
 }
 
@@ -103,16 +103,12 @@ let parseAmountToUnits = (s: string) => {
   }
 }
 
-// Generate a URL for sending tokens
+// Generate a URL for sending tokens (typed)
 let generateSendUrl = (command: sendOptions) =>
   switch command {
-  | {recipient, amount: ?Some(amountStr)} =>
-    switch parseAmountToUnits(amountStr) {
-    | Some(parsed) =>
-      `${confirmUrl}?idType=tag&recipient=${recipient}&amount=${parsed->BigInt.toString}&sendToken=${send.address}`
-    | None => `${sendUrl}?idType=tag&recipient=${recipient}&sendToken=${send.address}`
-    }
-  | {recipient, amount: ?None} => `${baseUrl}${recipient}`
+  | {recipient, amount: ?Some(a)} =>
+    `${confirmUrl}?idType=tag&recipient=${recipient->Sendtag.toParam}&amount=${a.units->BigInt.toString}&sendToken=${send.address}`
+  | {recipient, amount: ?None} => `${baseUrl}${recipient->Sendtag.toParam}`
   }
 
 // Generate text for send command
@@ -288,62 +284,37 @@ let parseSendCommand = (args, ~reply: option<Message.t>=?) => {
 
   // Extract recipient and amount based on whether this is a reply or direct command
   let (maybeRecipient, maybeAmount) = switch reply {
-  | Some(replyMsg) =>
-    // In reply case, first arg could be amount, recipient comes from reply message
-    let maybeAmount = switch args[0]->Option.map(
-      String.replaceRegExp(_, RegExp.fromString(",", ~flags="g"), ""),
-    ) {
-    | Some(amount) if amount->String.match(RegExp.fromString("^\\d+(\.\\d+)?$"))->Option.isSome =>
-      Some(amount)
-    | _ => None
-    }
-
-    let maybeRecipient = switch replyMsg
-    ->Message.from
-    ->Option.map(User.first_name) {
-    | None => None
-    | Some(firstName) => {
-        let parts = firstName->String.split("/")
-
-        // Check if there are parts after the first slash
-        if parts->Array.length > 1 {
-          // Take the second part (after the first slash) and clean it
-          let rawSendtag = parts[1]->Option.getOr("")
-          // Remove emojis and other non-alphanumeric characters except underscores
-          let cleanedTag =
-            rawSendtag
-            ->String.split(" ")
-            ->Array.get(0)
-            ->Option.getOr("")
-            ->String.replaceRegExp(RegExp.fromString("[^A-Za-z0-9_]", ~flags="g"), "")
-            ->String.trim
-          cleanSendtag(cleanedTag)
-        } else {
-          None
-        }
+  | Some(replyMsg) => {
+      // Recipient from reply user
+      let maybeRecipient =
+        replyMsg->Message.from->Option.map(User.first_name)->Option.flatMap(Sendtag.ofFirstName)
+      // Amount may be the first arg
+      let maybeAmount = switch args[0] {
+      | Some(amountRaw) =>
+        let cleaned =
+          amountRaw->String.replaceRegExp(RegExp.fromString("[\\n>].*$"), "")->String.trim
+        Amount.parse(cleaned)
+      | None => None
       }
+      (maybeRecipient, maybeAmount)
     }
-    (maybeRecipient, maybeAmount)
-  | None =>
-    // In direct case, first arg should be recipient, second arg could be amount
-    let maybeRecipient = args[0]->Option.flatMap(cleanSendtag)
-
-    // Validate amount if present
-    let maybeAmount = switch args[1]->Option.map(
-      String.replaceRegExp(_, RegExp.fromString(",", ~flags="g"), ""),
-    ) {
-    | Some(amount) if amount->String.match(RegExp.fromString("^\\d+(\.\\d+)?$"))->Option.isSome =>
-      Some(amount)
-    | _ => None
+  | None => {
+      // Direct case: first arg should be recipient, second arg could be amount
+      let maybeRecipient = args[0]->Option.flatMap(Sendtag.parse)
+      let maybeAmount = switch args[1] {
+      | Some(amountRaw) =>
+        let cleaned =
+          amountRaw->String.replaceRegExp(RegExp.fromString("[\\n>].*$"), "")->String.trim
+        Amount.parse(cleaned)
+      | None => None
+      }
+      (maybeRecipient, maybeAmount)
     }
-
-    (maybeRecipient, maybeAmount)
   }
 
   // Return the parsed command if recipient is available
   switch maybeRecipient {
   | None => None
-  | Some(recipient) if recipient == "" => None
   | Some(recipient) =>
     Some({
       recipient,
