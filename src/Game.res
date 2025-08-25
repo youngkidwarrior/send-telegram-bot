@@ -97,13 +97,18 @@ let gameStateText = state => {
   | Initializing => "Initializing game..."
   | Collecting(c) => {
       let playerCount = c.players->Array.length
-      let playerList = c.players->formatPlayerList
+      // Escape dynamic content for MarkdownV2 (mirror usage in formatWinnerMessage: 220–236)
+      let masterName = MessageFormat.escapeMarkdown(c.master->User.first_name)
+      let playerList =
+        c.players
+        ->Array.map(p => MessageFormat.escapeMarkdown(p.sendtag))
+        ->Array.join(", ")
       let surgeText =
         c.surgeAmount > 0n
           ? "\n📈 Send Surge: " ++ BigInt.toString(c.surgeAmount / surgeIncrease)
           : ""
 
-      c.master->User.first_name ++
+      masterName ++
       " is sending " ++
       c.amount->formatAmount ++
       " SEND\n\n" ++
