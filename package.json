@@ -10,7 +10,9 @@
     "dev": "rescript build && node src/Index.res.js",
     "dev:watch": "nodemon --exec \"rescript build && node src/Index.res.js\" --watch src --ext res",
     "res:build": "rescript build",
-    "res:dev": "rescript build -w"
+    "res:dev": "rescript build -w",
+    "res:format": "rescript format",
+    "prepare": "husky"
   },
   "dependencies": {
     "dotenv": "^16.4.1",
@@ -19,6 +21,7 @@
     "zod": "^4.1.0"
   },
   "devDependencies": {
+    "husky": "^9.0.0",
     "nodemon": "^3.0.3",
     "rescript": "12.0.0-beta.6"
   },
