@@ -33,7 +33,8 @@ let send = {
   symbol: "SEND",
 }
 
-let baseUrl = "https://send.app/send/"
+let baseUrl = "https://send.app/"
+let sendUrl = "https://send.app/send"
 let confirmUrl = "https://send.app/send/confirm/"
 
 let formatAmount = amount => {
@@ -109,10 +110,9 @@ let generateSendUrl = (command: sendOptions) =>
     switch parseAmountToUnits(amountStr) {
     | Some(parsed) =>
       `${confirmUrl}?idType=tag&recipient=${recipient}&amount=${parsed->BigInt.toString}&sendToken=${send.address}`
-    | None => `${baseUrl}?idType=tag&recipient=${recipient}&sendToken=${send.address}`
+    | None => `${sendUrl}?idType=tag&recipient=${recipient}&sendToken=${send.address}`
     }
-  | {recipient, amount: ?None} =>
-    `${baseUrl}?idType=tag&recipient=${recipient}&sendToken=${send.address}`
+  | {recipient, amount: ?None} => `${baseUrl}${recipient}`
   }
 
 // Generate text for send command
