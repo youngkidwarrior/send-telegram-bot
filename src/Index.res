@@ -448,7 +448,8 @@ let processPendingJoins = async chatId => {
           let (replyMarkupOpt, hiddenLinkOpt) = switch Sendtag.parse(sendtagStr) {
           | Some(recipient) => {
               // Convert game tokens to send units for URL and display
-              let amountVerified: Amount.verified = c.amount
+              let amountVerified: Amount.verified =
+                c.amount
                 ->Amount.tokensOfBigint
                 ->Amount.verifiedOfTokens
               let command: Command.sendOptions = {recipient, amount: ?Some(amountVerified)}
@@ -469,8 +470,9 @@ let processPendingJoins = async chatId => {
           }
           let telegramOptions = MessageFormat.toTelegramOptions(options)
           let baseText = `${Game.gameStateText(finalState)}\n\n${winnerMessage}`
+          // Use a single newline before the hidden link to minimize the gap before the preview
           let messageText = switch hiddenLinkOpt {
-          | Some(link) => baseText ++ "\n\n" ++ link
+          | Some(link) => baseText ++ "\n" ++ link
           | None => baseText
           }
           let _ = await withRetry(() =>

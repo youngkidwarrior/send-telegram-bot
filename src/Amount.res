@@ -13,8 +13,14 @@ type verified = {units: units, display: display}
 
 // Constructors and accessors
 let tokensOfBigint = (b: bigint): tokens => Tokens(b)
-let tokensValue = (t: tokens): bigint => switch t { | Tokens(b) => b }
-let unitsValue = (u: units): bigint => switch u { | Units(b) => b }
+let tokensValue = (t: tokens): bigint =>
+  switch t {
+  | Tokens(b) => b
+  }
+let unitsValue = (u: units): bigint =>
+  switch u {
+  | Units(b) => b
+  }
 
 // Conversions
 let unitsOfTokens = (t: tokens): units => Units(tokensValue(t) * 10n ** decimals)
