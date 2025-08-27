@@ -333,7 +333,15 @@ let fromContext = (ctx: Context.t): result<t, error> => {
   | Some(text) if text->String.length == 0 || text->String.charAt(0) != "/" =>
     Error("Not a command")
   | Some(text) => {
-      let command = text->String.split(" ")->Array.get(0)->Option.map(String.toLowerCase)
+      let commandRaw = text->String.split(" ")->Array.get(0)->Option.map(String.toLowerCase)
+      // Support commands with @mention suffix (e.g., /send@botname)
+      let command = switch commandRaw {
+      | Some(cmd) => {
+          let base = cmd->String.split("@")->Array.get(0)->Option.getOr(cmd)
+          Some(base)
+        }
+      | None => None
+      }
       let args = text->String.split(" ")->Array.slice(~start=1)
       // Parse different commands
       switch command {
