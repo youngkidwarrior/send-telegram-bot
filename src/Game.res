@@ -69,7 +69,7 @@ type joinResult =
   | Error(error)
 
 // Constants that affect gameplay
-let minPlayers = 3
+let minPlayers = 1
 let maxPlayers = 20
 let minGuessAmount = 50n
 let surgeCooldown = 60000 // 1 minute in milliseconds

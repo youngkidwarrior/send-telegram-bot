@@ -107,10 +107,10 @@ let parseAmountToUnits = (s: string) => {
 let generateSendUrl = (command: sendOptions) =>
   switch command {
   | {recipient, amount: ?Some(a)} =>
-    `${confirmUrl}?idType=tag&recipient=${recipient->Sendtag.toParam}&amount=${a.units->BigInt.toString}&sendToken=${send.address}`
-  | {recipient, amount: ?None} => `${baseUrl}${recipient->Sendtag.toParam}`
+    `${confirmUrl}?idType=tag&recipient=${recipient->Sendtag.toParam}&amount=${a.units->Amount.unitsValue->BigInt.toString}&sendToken=${send.address}`
+  | {recipient, amount: ?None} =>
+    `${baseUrl}${recipient->Sendtag.toParam}`
   }
-
 // Generate text for send command
 let generateSendText = (recipient, amount, ~note=?) => {
   let formattedAmount = formatAmount(amount)
