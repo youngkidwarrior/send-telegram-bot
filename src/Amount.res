@@ -1,13 +1,27 @@
 // Token config for SEND
 let decimals: bigint = 18n
 
-// amount types
+// Strongly typed amount wrappers
 
-type units = bigint
+type tokens = Tokens(bigint)
+
+type units = Units(bigint)
 
 type display = string
 
 type verified = {units: units, display: display}
+
+// Constructors and accessors
+let tokensOfBigint = (b: bigint): tokens => Tokens(b)
+let tokensValue = (t: tokens): bigint => switch t { | Tokens(b) => b }
+let unitsValue = (u: units): bigint => switch u { | Units(b) => b }
+
+// Conversions
+let unitsOfTokens = (t: tokens): units => Units(tokensValue(t) * 10n ** decimals)
+let verifiedOfTokens = (t: tokens): verified => {
+  let display = tokensValue(t)->BigInt.toString
+  {units: unitsOfTokens(t), display}
+}
 
 let parse = (input: string): option<verified> => {
   let s = input->String.trim
@@ -20,7 +34,7 @@ let parse = (input: string): option<verified> => {
       switch parts->Array.get(0) {
       | Some(intStr) =>
         switch BigInt.fromString(intStr) {
-        | Some(intPart) => Some({units: intPart * 10n ** decimals, display: s})
+        | Some(intPart) => Some({units: Units(intPart * 10n ** decimals), display: s})
         | None => None
         }
       | None => None
@@ -57,7 +71,7 @@ let parse = (input: string): option<verified> => {
             | None => 0n
             }
           }
-          Some({units: intUnits + fracUnits, display: s})
+          Some({units: Units(intUnits + fracUnits), display: s})
         }
       }
     | _ => None
@@ -67,7 +81,7 @@ let parse = (input: string): option<verified> => {
 
 let formatUnits = (u: units): string => {
   let divisor = 10n ** decimals
-  let integer = u / divisor
+  let integer = unitsValue(u) / divisor
   BigInt.toString(integer)
 }
 

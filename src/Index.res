@@ -444,17 +444,23 @@ let processPendingJoins = async chatId => {
           enqueueDelete({chatId, messageId: prevMessageId})
           let winnerMessage = Game.formatWinnerMessage(finalState)
           let sendtagStr = c.winner.sendtag->String.replace("/", "")
-          let replyMarkupOpt = switch Sendtag.parse(sendtagStr) {
+          // Build reply markup and hidden profile link when we can parse the sendtag
+          let (replyMarkupOpt, hiddenLinkOpt) = switch Sendtag.parse(sendtagStr) {
           | Some(recipient) => {
-              let amountVerified: Amount.verified = {
-                units: c.amount,
-                display: Amount.formatUnits(c.amount),
-              }
+              // Convert game tokens to send units for URL and display
+              let amountVerified: Amount.verified = c.amount
+                ->Amount.tokensOfBigint
+                ->Amount.verifiedOfTokens
               let command: Command.sendOptions = {recipient, amount: ?Some(amountVerified)}
               let url = Command.generateSendUrl(command)
-              Some(MessageFormat.inlineKeyboard([[MessageFormat.button(~text="/send", ~url)]]))
+              let rm = Some(
+                MessageFormat.inlineKeyboard([[MessageFormat.button(~text="/send", ~url)]]),
+              )
+              let profileUrl = `${Command.baseUrl}${recipient->Sendtag.toParam}`
+              let hiddenLink = "[‎](" ++ profileUrl ++ ")"
+              (rm, Some(hiddenLink))
             }
-          | None => None
+          | None => (None, None)
           }
           let options = {
             ...MessageFormat.defaultOptions,
@@ -462,10 +468,15 @@ let processPendingJoins = async chatId => {
             replyMarkup: replyMarkupOpt,
           }
           let telegramOptions = MessageFormat.toTelegramOptions(options)
+          let baseText = `${Game.gameStateText(finalState)}\n\n${winnerMessage}`
+          let messageText = switch hiddenLinkOpt {
+          | Some(link) => baseText ++ "\n\n" ++ link
+          | None => baseText
+          }
           let _ = await withRetry(() =>
             Telegraf.telegram(telegraf)->Telegram.sendMessage(
               chatId,
-              `${Game.gameStateText(finalState)}\n\n${winnerMessage}`,
+              messageText,
               ~options=telegramOptions,
             )
           )
