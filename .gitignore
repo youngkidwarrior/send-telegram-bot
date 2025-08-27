@@ -5,3 +5,4 @@ node_modules
 /lib
 *.res.js
 llm-full.txt
+index.ts

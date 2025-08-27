@@ -273,14 +273,18 @@ let handleGuessCommand = async (ctx: Telegraf.Context.t) => {
         | (Ok(Command.Guess({?maxNumber, ?baseAmount})), Some(_m), Some(from)) => {
             // Compute current minimum including surge
             let prevSurge = surges->Map.get(chatId)
+            let isActive = switch prevSurge {
+            | Some(s) => Game.isSurgeActive(s)
+            | None => false
+            }
             let surgeAmount = switch prevSurge {
-            | Some(s) if Game.isSurgeActive(s) => BigInt.fromInt(s.multiplier) * Game.surgeIncrease
+            | Some(s) if isActive => BigInt.fromInt(s.multiplier) * Game.surgeIncrease
             | _ => 0n
             }
             let currentMin = Game.minGuessAmount + surgeAmount
 
-            // Decide final base amount and whether to apply surge
-            let applySurge = switch baseAmount {
+            // Decide final base amount and whether the surge applies to THIS game
+            let shouldApplySurgeToCurrent = switch baseAmount {
             | Some(requested) => requested < currentMin
             | None => true
             }
@@ -288,8 +292,8 @@ let handleGuessCommand = async (ctx: Telegraf.Context.t) => {
             | Some(requested) if requested >= currentMin => requested
             | _ => Game.minGuessAmount
             }
-            // Pass the previous surge state to this game (so first guess after cooldown is not boosted)
-            let finalSurge = if applySurge {
+            // Apply the previous surge state to this game only when appropriate
+            let finalSurge = if shouldApplySurgeToCurrent {
               prevSurge
             } else {
               None
@@ -311,16 +315,12 @@ let handleGuessCommand = async (ctx: Telegraf.Context.t) => {
               ~surge=?finalSurge,
             )
 
-            // After creating the game, update surge state for future guesses (increment or reset)
-            if applySurge {
-              switch prevSurge {
-              | Some(s) if Game.isSurgeActive(s) =>
-                surges->Map.set(chatId, {Game.multiplier: s.multiplier + 1, updatedAt: Date.now()})
-              | _ => surges->Map.set(chatId, {Game.multiplier: 1, updatedAt: Date.now()})
-              }
-            } else {
-              ()
+            // After creating the game, always update surge state for FUTURE guesses
+            let nextMultiplier = switch prevSurge {
+            | Some(s) if isActive => s.multiplier + 1
+            | _ => 1
             }
+            surges->Map.set(chatId, {Game.multiplier: nextMultiplier, updatedAt: Date.now()})
             result
           }
         | (_, Some(_m), None) => (chatId, Game.Cancelled(Game.Error("Missing user information")))
