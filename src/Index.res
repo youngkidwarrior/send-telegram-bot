@@ -76,11 +76,12 @@ let buildSendMd = (
     }
   | None => Markdown.bold(Markdown.concat([mdSender, Markdown.text(" sending to "), mdRecipient]))
   }
-  // Optional note
+  // Header line with plain-text gutter to avoid color mismatch
+  let headerMd = Markdown.concat([Markdown.text("\n┃ "), headerCore])
+  // Optional note rendered with divider and plain-text gutter
   let noteMd = switch noteOpt {
   | None => Markdown.text("")
-  | Some(n) =>
-    Markdown.concat([Markdown.newline, Markdown.divider, Markdown.newline, Markdown.text(n)])
+  | Some(n) => Markdown.concat([Markdown.text("\n┃ ━━━━━━━━━━\n┃ "), Markdown.text(n)])
   }
   // Optional reply mention (if replying to a user)
   let replyMd = switch ctx.message
@@ -103,7 +104,7 @@ let buildSendMd = (
     }
   | None => Markdown.text("")
   }
-  Markdown.concat([Markdown.codeHeaderPrefix, headerCore, noteMd, senderPadMd, replyMd])
+  Markdown.concat([headerMd, noteMd, senderPadMd, replyMd])
 }
 
 // Delete queue
