@@ -80,8 +80,8 @@ let buildSendText = (
   | Some(n) => {
       // No special wrapping; preserve user spacing and escape for MarkdownV2
       let escaped = n->mdEscape
-      // Render with divider line like TS
-      "\n┃` `━━━━━━━━━━\n┃` " ++ escaped
+      // Render with divider line; keep gutter outside of code formatting to avoid color mismatch
+      "\n┃ ━━━━━━━━━━\n┃ " ++ escaped
     }
   }
   // Optional reply mention (if replying to a user)
@@ -92,8 +92,8 @@ let buildSendText = (
     "[‎](tg://user?id=" ++ u->Telegraf.User.id->Telegraf.IntId.toInt->Int.toString ++ ")"
   | None => ""
   }
-  // Build final text using inline code backticks pattern
-  let header = "`\n┃ `" ++ headerCore
+  // Build final text with consistent MarkdownV2 (no stray backticks around the gutter)
+  let header = "\n┃ " ++ headerCore
   let senderLine = switch amountUnitsOpt {
   | Some(units) if units > 0n =>
     let padLen = 28 - String.length(markdownSender) - 8 /* "sent by " */
@@ -102,7 +102,7 @@ let buildSendText = (
     } else {
       ""
     }
-    "\n┃` " ++ padding ++ "`sent by " ++ markdownSender ++ "`"
+    "\n┃ " ++ padding ++ "`sent by " ++ markdownSender ++ "`"
   | _ => ""
   }
   header ++ noteText ++ senderLine ++ replyText
@@ -487,19 +487,27 @@ let setupBot = () => {
         | Some(a) => Command.parseAmountToUnits(a)
         | None => None
         }
-        let messageText = buildSendText(ctx, recipientDisplay, unitsOpt, note)
-        // Match TS behavior: inline keyboard button labeled '/send' linking to the generated URL
-        let replyMarkup = MessageFormat.inlineKeyboard([
-          [MessageFormat.button(~text="/send", ~url)],
-        ])
-        // Ensure MarkdownV2 parse mode
+        let unitsStr = switch unitsOpt {
+        | Some(u) => u->BigInt.toString
+        | None => "None"
+        }
+        let messageTextBase = buildSendText(ctx, recipientDisplay, unitsOpt, note)
+        // Build a hidden profile link (so OG preview shows)
+        let profileUrl = `${Command.baseUrl}${recipient}`
+        let hiddenLink = "[‎](" ++ profileUrl ++ ")"
+        // Compose one message with styled text and hidden link; include inline button when amount is valid
+        let messageText = messageTextBase ++ "\n\n" ++ hiddenLink
+        let replyMarkupOpt = switch unitsOpt {
+        | Some(_) =>
+          Some(MessageFormat.inlineKeyboard([[MessageFormat.button(~text="/send", ~url)]]))
+        | None => None
+        }
         let options = {
           ...MessageFormat.defaultOptions,
           format: #Markdown,
-          replyMarkup: Some(replyMarkup),
+          replyMarkup: replyMarkupOpt,
         }
         let telegramOptions = MessageFormat.toTelegramOptions(options)
-        // Always reply (don't restrict to private chats)
         switch await withRetry(() => ctx->Context.reply(messageText, ~options=telegramOptions)) {
         | Ok(_) => Console.log("[/send] replied with link successfully")
         | Error(e) => Console.error2("[/send] failed to reply:", e)
