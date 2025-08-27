@@ -78,10 +78,23 @@ let buildSendMd = (
   }
   // Header line with plain-text gutter to avoid color mismatch
   let headerMd = Markdown.concat([Markdown.text("\n┃ "), headerCore])
-  // Optional note rendered with divider and plain-text gutter
+  // Optional note rendered with divider and plain-text gutter (prefix every line)
   let noteMd = switch noteOpt {
   | None => Markdown.text("")
-  | Some(n) => Markdown.concat([Markdown.text("\n┃ ━━━━━━━━━━\n┃ "), Markdown.text(n)])
+  | Some(n) => {
+      let parts = n->String.split("\n")
+      let prefixed = parts->Array.reduce("", (acc, line) =>
+        if acc == "" {
+          "┃ " ++ line
+        } else {
+          acc ++ "\n┃ " ++ line
+        }
+      )
+      Markdown.concat([
+        Markdown.text("\n┃ ━━━━━━━━━━\n"),
+        Markdown.text(prefixed),
+      ])
+    }
   }
   // Optional reply mention (if replying to a user)
   let replyMd = switch ctx.message
